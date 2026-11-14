@@ -21,6 +21,7 @@ class Flags(unittest.TestCase):
                 '-Xclang', '-add-plugin', '-Xclang', 'find-bad-constructs',
                 '-Xclang', '-plugin-arg-find-bad-constructs', '-Xclang', 'check-ipc',
                 '-Xclang', '-fno-something-abi', '-mllvm', '-instcombine-lower-dbg-declare=0',
+                '-Xclang', '-fmodule-file-home-is-cwd', '-Xclang', '-fmodules-cache-path=/not_exist_dummy_dir',
                 '-fdebug-compilation-dir=.', '-c', '../../chromium_sdk/embedder_probe.cc', '-o', 'obj/x.o']
         flags, defines, includes, system = package.compile_flags(argv, mapping)
         self.assertEqual(defines, ['CHROMIUM_SDK_EXPORTS', '_LIBCPP_ABI_NAMESPACE=__Cr'])
@@ -37,6 +38,8 @@ class Flags(unittest.TestCase):
             package.compile_flags(['clang++', '-fsome-file=../../tools/x.txt'], mapping)
         with self.assertRaises(package.PathLeak):
             package.compile_flags(['clang++', '-I/home/builder/elsewhere'], mapping)
+        with self.assertRaises(package.PathLeak):
+            package.compile_flags(['clang++', '-Xclang', '-fsome-file=/home/builder/x'], mapping)
 
     def test_mac_sdk_is_the_embedders(self):
         mapping = package.path_mapping(MAC)

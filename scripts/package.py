@@ -44,7 +44,8 @@ DROP_MODULES = ('-fmodules', '-fno-implicit-module-maps', '-fno-implicit-modules
                 '-fno-modules', '-fmodule-name', '-fmodules-')
 XCLANG_DROP = ('-add-plugin', '-load', '-plugin-arg-', '-debug-info-kind', '-fuse-ctor-homing',
                '-fdebug-compilation-dir', '-fno-pch-timestamp', '-fmodules-local-submodule-visibility',
-               '-fmodules-disable-diagnostic-validation')
+               '-fmodules-disable-diagnostic-validation', '-fmodule-file-home-is-cwd', '-fmodules-cache-path',
+               '-fmodule-')
 INCLUDE_FLAGS = ('-isystem', '-idirafter', '-iquote')
 # Link flags that only tune or diagnose Chromium's own links, or choose where the binary finds its libraries,
 # which is the embedder's call.
@@ -112,6 +113,8 @@ def compile_flags(argv, mapping):
                 drop_next_xclang = False
             elif nxt.startswith(XCLANG_DROP):
                 drop_next_xclang = nxt in ('-add-plugin', '-load') or nxt.startswith('-plugin-arg-')
+            elif has_path(nxt):
+                raise PathLeak(nxt)
             else:
                 flags += [arg, nxt]
             i += 2
@@ -334,7 +337,8 @@ def package(target, checkout, out, version, output):
         shutil.copy2(out/name, lib/'lib'/name)
         runtime_libraries.append(f'lib/{name}')
     resources = lib/'resources'
-    shutil.copytree(out/'chromium_sdk', resources)
+    # The packs, without the lists of what's in them that the build keeps.
+    shutil.copytree(out/'chromium_sdk', resources, ignore=shutil.ignore_patterns('*.info'))
     for name in ('icudtl.dat', 'v8_context_snapshot.bin', 'snapshot_blob.bin'):
         if (out/name).exists():
             shutil.copy2(out/name, resources/name)

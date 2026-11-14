@@ -16,6 +16,8 @@ exports between its components, and turns off what can't hold across that bounda
   as in a component build. V8 has its own argument, `v8_expose_public_symbols` (chromium/args.gn).
 - V8's thread-locals use a model a shared library can hold, as in a component build, rather than the
   executable-only local-exec. (Blink's heap has an argument of its own for this, set in chromium/args.gn.)
+- On macOS the allocator shim's operator new and delete stay visible, as in a component build, matching shared
+  libc++'s declarations.
 - macOS's shared libc++ gets an @rpath install name, as every library in a component build does.
 - Executables and shared libraries find the shared libraries beside them, as in a component build, since libc++
   and FFmpeg are shared libraries here too, and the build runs executables of its own, such as protoc.
@@ -109,6 +111,13 @@ GN_EDITS = (
      '    # Use libc++_chrome to avoid conflicting with system libc++\n    output_name = "libc++_chrome"\n'
      f'    if (is_apple && {ARG}) {{\n'
      '      ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]\n    }\n'),
+    # On Apple, a non-component build hides the allocator shim's operator new and delete, so an executable doesn't
+    # export them; with libc++ a shared library, as in a component build, that contradicts libc++'s own
+    # declarations, and the library is where an embedder's operator new must come from.
+    ('base/allocator/partition_allocator/src/partition_alloc/BUILD.gn',
+     '  config("mac_no_default_new_delete_symbols") {\n    if (!is_component_build) {\n',
+     '  config("mac_no_default_new_delete_symbols") {\n'
+     f'    if (!is_component_build && !(defined({ARG}) && {ARG})) {{\n'),
     ('skia/BUILD.gn',
      '  if (is_component_build) {\n    defines += [ "SKIA_DLL" ]\n  }\n',
      f'  if (is_component_build || {ARG}) {{\n    defines += [ "SKIA_DLL" ]\n  }}\n'),

@@ -86,6 +86,8 @@ class CarriedPatches(unittest.TestCase):
                             'ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]',
                             '_component_mode = "source_set"'):
                     continue
+                if body.startswith('if (!is_component_build && !(defined(chromium_sdk_exports)'):
+                    continue
                 self.assertTrue('CHROMIUM_SDK_EXPORTS' in body or 'chromium_sdk_exports' in body,
                                 f'{patch.name}: {line}')
 
