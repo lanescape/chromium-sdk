@@ -1,0 +1,27 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index 8956a3dc357..d13f44226ae 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -1361,7 +1361,8 @@ config("features") {
+     defines += [ "CPPGC_ALLOW_ALLOCATIONS_IN_PREFINALIZERS" ]
+   }
+ 
+-  if (v8_monolithic && v8_monolithic_for_shared_library) {
++  if ((v8_monolithic && v8_monolithic_for_shared_library) ||
++      (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
+     defines += [ "V8_TLS_USED_IN_LIBRARY" ]
+   }
+ 
+diff --git a/include/v8config.h b/include/v8config.h
+index b7aeeade6b8..ae5fb8889ed 100644
+--- a/include/v8config.h
++++ b/include/v8config.h
+@@ -401,7 +401,7 @@ path. Add it with -I<path> to the command line
+ #if (defined(_M_X64) || defined(__x86_64__)            /* x64 (everywhere) */  \
+      || ((defined(__AARCH64EL__) || defined(_M_ARM64)) /* arm64, but ... */    \
+          && !defined(_WIN32)))                         /* not on windows */    \
+-     && !defined(COMPONENT_BUILD)                      /* no component build */\
++     && !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))                      /* no component build */\
+      && __clang_major__ >= 17                          /* clang >= 17 */
+ # define V8_HAS_ATTRIBUTE_PRESERVE_MOST (__has_attribute(preserve_most))
+ #endif

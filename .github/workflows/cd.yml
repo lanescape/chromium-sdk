@@ -1,0 +1,150 @@
+name: CD
+
+# Every push to main publishes the next version of its Chromium pin as a GitHub release: every target built, tested,
+# and published with its notices and corresponding source (specs/0003-ci-cd.md, CD). One run at a time, each in its
+# turn, in the order they began to wait, and none cancelled, waiting or running, so versions are numbered in the
+# order their commits reached main and every commit gets its own.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: cd
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  version:
+    name: Version
+    runs-on: lanescape-2vcpu-linux-amd64
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - name: Fetch release tags and history
+        run: git fetch --quiet --tags --unshallow origin 2>/dev/null || git fetch --quiet --tags origin
+      - id: version
+        run: python3 scripts/version.py main | python3 scripts/cd_summary.py
+
+  checks:
+    uses: ./.github/workflows/checks.yml
+    permissions:
+      contents: read
+
+  build-linux:
+    name: Build ${{ matrix.target }}
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux-amd64, linux-arm64]
+    runs-on: lanescape-80vcpu-linux-amd64-spot
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+        with:
+          family: ${{ matrix.target }}
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: ./.github/actions/build
+        with:
+          target: ${{ matrix.target }}
+          version: ${{ needs.version.outputs.version }}
+          release: 'true'
+      - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+
+  build-macos:
+    name: Build macos-arm64
+    needs: version
+    if: needs.version.outputs.publish == 'true'
+    runs-on: lanescape-80vcpu-linux-amd64-spot
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: lanescape/actions/disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+        with:
+          family: macos-arm64
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: ./.github/actions/build
+        with:
+          target: macos-arm64
+          version: ${{ needs.version.outputs.version }}
+          release: 'true'
+          apple-sdk-provider: ${{ vars.APPLE_SDK_WORKLOAD_IDENTITY_PROVIDER }}
+          apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
+      - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+
+  test:
+    name: Test ${{ matrix.target }}
+    needs: [build-linux, build-macos]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: lanescape-16vcpu-linux-amd64
+          - target: linux-arm64
+            runner: lanescape-16vcpu-linux-arm64
+          - target: macos-arm64
+            runner: blacksmith-12vcpu-macos-26
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: embedder-${{ matrix.target }}
+          path: ${{ runner.temp }}
+      - name: Run the test embedder
+        env:
+          TARGET: ${{ matrix.target }}
+        run: tests/embedder/test.sh "$RUNNER_TEMP/embedder-$TARGET.tar"
+
+  publish:
+    name: Publish
+    needs: [version, checks, test]
+    runs-on: lanescape-2vcpu-linux-amd64
+    permissions:
+      contents: write
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - name: Fetch release tags and history
+        run: git fetch --quiet --tags --unshallow origin 2>/dev/null || git fetch --quiet --tags origin
+      - name: Check this is still the next version
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          now="$(python3 scripts/version.py main)"
+          if [ "$(jq -r .version <<<"$now")" != "$VERSION" ]; then
+            echo "::error::A release appeared since this run chose $VERSION: $(jq -r '.reason // .version' <<<"$now")"
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: assets-*
+          path: ${{ runner.temp }}/jobs
+      - name: Publish the release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          release="$RUNNER_TEMP/release"
+          python3 scripts/publish.py gather "$release" "$RUNNER_TEMP"/jobs/*
+          python3 scripts/publish.py manifest "$release" --version "$VERSION" --commit "$COMMIT"
+          python3 scripts/publish.py release "$release"

@@ -1,0 +1,29 @@
+name: Checks
+
+# The checks that need no Chromium: the scripts' tests, the repository's own consistency checks and the workflows'
+# lint (specs/0003-ci-cd.md, CI). Called by ci.yml and cd.yml. A fork's pull request runs only these, on GitHub's
+# runners, since the runner service makes no machines for forks.
+
+on:
+  workflow_call:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'lanescape-2vcpu-linux-amd64' || 'ubuntu-26.04' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - name: Script tests
+        run: python3 -m unittest discover --start-directory tests/scripts --top-level-directory . --verbose
+      - name: Repository checks
+        run: python3 scripts/check.py
+      - name: Workflow lint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

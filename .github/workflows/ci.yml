@@ -1,0 +1,102 @@
+name: CI
+
+# Pull requests build every target on the runner service's Linux amd64 machines and test each on a machine like
+# the target's (specs/0003-ci-cd.md, CI). A fork's pull request runs only the checks. A new push cancels the run in
+# progress.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+    permissions:
+      contents: read
+
+  build-linux:
+    name: Build ${{ matrix.target }}
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux-amd64, linux-arm64]
+    runs-on: lanescape-80vcpu-linux-amd64-spot
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+        with:
+          family: ${{ matrix.target }}
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - id: version
+        env:
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: echo "version=$(python3 scripts/version.py pr "$NUMBER")" >>"$GITHUB_OUTPUT"
+      - uses: ./.github/actions/build
+        with:
+          target: ${{ matrix.target }}
+          version: ${{ steps.version.outputs.version }}
+      - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+
+  build-macos:
+    name: Build macos-arm64
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: lanescape-80vcpu-linux-amd64-spot
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: lanescape/actions/disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+        with:
+          family: macos-arm64
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - id: version
+        env:
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: echo "version=$(python3 scripts/version.py pr "$NUMBER")" >>"$GITHUB_OUTPUT"
+      - uses: ./.github/actions/build
+        with:
+          target: macos-arm64
+          version: ${{ steps.version.outputs.version }}
+          apple-sdk-provider: ${{ vars.APPLE_SDK_WORKLOAD_IDENTITY_PROVIDER }}
+          apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
+      - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+
+  test:
+    name: Test ${{ matrix.target }}
+    needs: [build-linux, build-macos]
+    if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: lanescape-16vcpu-linux-amd64
+          - target: linux-arm64
+            runner: lanescape-16vcpu-linux-arm64
+          - target: macos-arm64
+            runner: blacksmith-12vcpu-macos-26
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: embedder-${{ matrix.target }}
+          path: ${{ runner.temp }}
+      - name: Run the test embedder
+        env:
+          TARGET: ${{ matrix.target }}
+        run: tests/embedder/test.sh "$RUNNER_TEMP/embedder-$TARGET.tar"

@@ -1,0 +1,111 @@
+name: Build an SDK target
+description: >-
+  Builds one target's SDK on a runner-service machine whose work disk is mounted at /work, packages it, and builds
+  the test embedder against the package (specs/0003-ci-cd.md). The job asks for the disk and checks out this
+  repository first, and asks to save the disk last.
+inputs:
+  target:
+    description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
+    required: true
+  version:
+    description: The version the packages carry
+    required: true
+  release:
+    description: "'true' to also write the corresponding source and keep every asset for publishing"
+    required: false
+    default: 'false'
+  apple-sdk-provider:
+    description: macOS only. The workload identity provider that may read the Apple SDK's bucket
+    required: false
+    default: ''
+  apple-sdk-service-account:
+    description: macOS only. The service account that provider signs in as
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Sign in to read the Apple SDK
+      if: inputs.target == 'macos-arm64'
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.apple-sdk-provider }}
+        service_account: ${{ inputs.apple-sdk-service-account }}
+    - if: inputs.target == 'macos-arm64'
+      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+    - name: Check out and patch Chromium
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        CHROMIUM_SDK_CHECKOUT: /work/chromium
+        DEPOT_TOOLS: /work/depot_tools
+      run: |
+        set -euo pipefail
+        for step in checkout packages mac-sdk patch configure; do
+          python3 scripts/sdk.py "$step" "$TARGET"
+        done
+    - name: Build
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        CHROMIUM_SDK_CHECKOUT: /work/chromium
+        DEPOT_TOOLS: /work/depot_tools
+      run: python3 scripts/sdk.py build "$TARGET"
+    - name: Package
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        VERSION: ${{ inputs.version }}
+        RELEASE: ${{ inputs.release }}
+        CHROMIUM_SDK_CHECKOUT: /work/chromium
+        DEPOT_TOOLS: /work/depot_tools
+      run: |
+        set -euo pipefail
+        assets="$RUNNER_TEMP/assets-$TARGET"
+        rm -rf "$assets"
+        python3 scripts/sdk.py package "$TARGET" --version "$VERSION" --output "$assets"
+        if [ "$RELEASE" = true ]; then
+          # One Linux job also makes the sysroots' Debian sources and this repository's.
+          sysroots=()
+          [ "$TARGET" = linux-amd64 ] && sysroots=(--sysroots)
+          python3 scripts/sdk.py sources "$TARGET" --version "$VERSION" --output "$assets" "${sysroots[@]}"
+        fi
+    - name: Build the test embedder against the package
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        sdk="$RUNNER_TEMP/sdk-$TARGET"
+        rm -rf "$sdk"
+        mkdir -p "$sdk"
+        for part in lib headers toolchain sysroot; do
+          file="$RUNNER_TEMP/assets-$TARGET/chromium-sdk-$VERSION-$TARGET-$part.tar.zst"
+          if [ -f "$file" ]; then
+            tar --zstd -xf "$file" -C "$sdk"
+          fi
+        done
+        apple=()
+        if [ "$TARGET" = macos-arm64 ]; then
+          apple=(--apple-sdk /work/chromium/src/build/mac_files/xcode_binaries/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk)
+        fi
+        python3 tests/embedder/build.py --sdk "$sdk" --output "$RUNNER_TEMP/embedder-$TARGET" "${apple[@]}"
+        # A tar keeps the executable's mode, which an artifact alone would lose.
+        tar -cf "$RUNNER_TEMP/embedder-$TARGET.tar" -C "$RUNNER_TEMP/embedder-$TARGET" .
+    - name: Hand the test embedder to its test machine
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: embedder-${{ inputs.target }}
+        path: ${{ runner.temp }}/embedder-${{ inputs.target }}.tar
+        retention-days: 3
+        if-no-files-found: error
+    - name: Keep the assets for publishing
+      if: inputs.release == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: assets-${{ inputs.target }}
+        path: ${{ runner.temp }}/assets-${{ inputs.target }}
+        retention-days: 7
+        compression-level: 0
+        if-no-files-found: error

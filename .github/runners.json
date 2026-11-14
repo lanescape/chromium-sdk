@@ -1,0 +1,40 @@
+{
+  "disks": {
+    "linux-amd64": {
+      "from": [
+        "chromium/pin.json",
+        "chromium/gclient",
+        "chromium/args.gn",
+        "chromium/gn/BUILD.gn",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "targets.json"
+      ]
+    },
+    "linux-arm64": {
+      "from": [
+        "chromium/pin.json",
+        "chromium/gclient",
+        "chromium/args.gn",
+        "chromium/gn/BUILD.gn",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "targets.json"
+      ]
+    },
+    "macos-arm64": {
+      "from": [
+        "chromium/pin.json",
+        "chromium/gclient",
+        "chromium/args.gn",
+        "chromium/gn/BUILD.gn",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "targets.json"
+      ]
+    }
+  }
+}

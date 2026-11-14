@@ -1,0 +1,180 @@
+# The SDK's targets, which sdk.py links into Chromium's tree as //chromium_sdk (specs/0002-build.md). Chromium's
+# own targets are untouched: this only collects them into one shared library, its resources and the flags an
+# embedder compiles with.
+
+import("//build/config/locales.gni")
+import("//build/config/ui.gni")
+import("//tools/grit/repack.gni")
+import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
+
+assert(chromium_sdk_exports, "set chromium_sdk_exports = true (chromium/args.gn)")
+assert(!is_component_build, "the SDK links Chromium into one shared library")
+
+# What the library exports, with everything these reach. A component build's exports between these targets'
+# components are the library's exports (specs/0001-sdk.md, Exports).
+_exported = [
+  "//base",
+  "//base:i18n",
+  "//cc",
+  "//components/embedder_support:user_agent",
+  "//components/input",
+  "//components/keyed_service/content",
+  "//components/viz/host",
+  "//content/public/app",
+  "//content/public/browser",
+  "//content/public/child",
+  "//content/public/common",
+  "//content/public/gpu",
+  "//content/public/renderer",
+  "//content/public/utility",
+  "//gin",
+  "//ipc",
+  "//media",
+  "//mojo/core/embedder",
+  "//mojo/public/cpp/bindings",
+  "//mojo/public/cpp/system",
+  "//mojo/public/mojom/base",
+  "//net",
+  "//sandbox",
+  "//sandbox/policy",
+  "//services/cert_verifier/public/mojom",
+  "//services/network/public/cpp",
+  "//services/network/public/mojom",
+  "//services/service_manager/public/cpp",
+  "//services/viz/privileged/mojom/compositing",
+  "//skia",
+  "//storage/browser",
+  "//third_party/blink/public:blink",
+  "//third_party/blink/public/common",
+  "//ui/accessibility",
+  "//ui/base",
+  "//ui/base/clipboard",
+  "//ui/base/ime",
+  "//ui/compositor",
+  "//ui/display",
+  "//ui/events",
+  "//ui/events/blink",
+  "//ui/events/devices",
+  "//ui/gfx",
+  "//ui/gfx/geometry",
+  "//ui/gl",
+  "//ui/native_theme",
+  "//url",
+  "//v8",
+]
+if (use_aura) {
+  _exported += [
+    "//ui/aura",
+    "//ui/platform_window",
+    "//ui/wm",
+  ]
+}
+if (use_ozone) {
+  _exported += [ "//ui/ozone" ]
+}
+if (is_mac) {
+  _exported += [ "//sandbox/mac:seatbelt" ]
+}
+
+# libchromium.so or libchromium.dylib. Its dependencies are public, so a target that depends on it compiles with
+# their settings, as an embedder must, but links only the library: a shared library is a link boundary.
+shared_library("chromium") {
+  public_deps = _exported
+  if (is_mac) {
+    ldflags = [ "-Wl,-install_name,@rpath/libchromium.dylib" ]
+  }
+}
+
+# An embedder in miniature, compiled and linked as the SDK says. sdk.py package reads its compile and link commands
+# for the flags it ships (specs/0001-sdk.md, Compiling and linking), and building it shows those work.
+executable("embedder_probe") {
+  sources = [ "embedder_probe.cc" ]
+  if (is_mac) {
+    sources += [ "embedder_probe_mac.mm" ]
+  }
+  deps = [ ":chromium" ]
+}
+
+# Resources that aren't strings, at 100% scale: what Content, Blink, the network stack and the UI load at runtime,
+# without content_shell's test-only ones.
+repack("resources") {
+  sources = [
+    "$root_gen_dir/base/tracing/protos/tracing_proto_resources.pak",
+    "$root_gen_dir/components/ukm_resources.pak",
+    "$root_gen_dir/content/browser/resources/media/media_internals_resources.pak",
+    "$root_gen_dir/content/browser/webrtc/resources/webrtc_internals_resources.pak",
+    "$root_gen_dir/content/content_resources.pak",
+    "$root_gen_dir/content/gpu_resources.pak",
+    "$root_gen_dir/content/histograms_resources.pak",
+    "$root_gen_dir/content/process_resources.pak",
+    "$root_gen_dir/content/quota_internals_resources.pak",
+    "$root_gen_dir/content/service_worker_resources.pak",
+    "$root_gen_dir/mojo/public/js/mojo_bindings_resources.pak",
+    "$root_gen_dir/net/net_resources.pak",
+    "$root_gen_dir/third_party/blink/public/resources/blink_resources.pak",
+    "$root_gen_dir/third_party/blink/public/resources/blink_scaled_resources_100_percent.pak",
+    "$root_gen_dir/third_party/blink/public/resources/inspector_overlay_resources.pak",
+    "$root_gen_dir/third_party/blink/public/strings/permission_element_generated_strings.pak",
+    "$root_gen_dir/ui/resources/ui_lottie_resources.pak",
+    "$root_gen_dir/ui/resources/ui_resources_100_percent.pak",
+    "$root_gen_dir/ui/webui/resources/webui_resources.pak",
+  ]
+  deps = [
+    "//base/tracing/protos:chrome_track_event_resources",
+    "//components/ukm/debug:resources",
+    "//content:content_resources",
+    "//content/browser/resources",
+    "//content/browser/resources/media:resources",
+    "//content/browser/webrtc/resources",
+    "//mojo/public/js:resources",
+    "//net:net_resources",
+    "//third_party/blink/public:devtools_inspector_resources",
+    "//third_party/blink/public:resources",
+    "//third_party/blink/public:scaled_resources_100_percent",
+    "//third_party/blink/public/strings:permission_element_generated_strings",
+    "//ui/resources",
+    "//ui/webui/resources",
+  ]
+  output = "$root_out_dir/chromium_sdk/resources.pak"
+}
+
+# Strings, one pack for each locale Chromium ships.
+repack_locales("locales") {
+  input_locales = platform_pak_locales
+  output_locales = platform_pak_locales
+  output_dir = "$root_out_dir/chromium_sdk/locales"
+  source_patterns = [
+    "$root_gen_dir/third_party/blink/public/strings/blink_strings_",
+    "$root_gen_dir/third_party/blink/public/strings/permission_element_strings_",
+    "$root_gen_dir/ui/strings/app_locale_settings_",
+    "$root_gen_dir/ui/strings/auto_image_annotation_strings_",
+    "$root_gen_dir/ui/strings/ax_strings_",
+    "$root_gen_dir/ui/strings/ui_strings_",
+  ]
+  deps = [
+    "//third_party/blink/public/strings",
+    "//third_party/blink/public/strings:permission_element_strings",
+    "//ui/strings:app_locale_settings",
+    "//ui/strings:auto_image_annotation_strings",
+    "//ui/strings:ax_strings",
+    "//ui/strings:ui_strings",
+  ]
+}
+
+group("chromium_sdk") {
+  deps = [
+    ":chromium",
+    ":embedder_probe",
+    ":locales",
+    ":resources",
+    "//third_party/icu:icudata",
+  ]
+
+  # V8's context snapshot is made by running a build of the target, which a Linux machine can't do for macOS, so
+  # a macOS SDK ships V8's own snapshot instead (specs/0001-sdk.md, Runtime files).
+  if (use_v8_context_snapshot) {
+    deps += [ "//tools/v8_context_snapshot" ]
+  } else {
+    deps += [ "//v8:run_mksnapshot_default" ]
+  }
+}

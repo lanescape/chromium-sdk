@@ -1,0 +1,2181 @@
+diff --git a/base/base_export.h b/base/base_export.h
+index dd4c5912e5d..1caecad718a 100644
+--- a/base/base_export.h
++++ b/base/base_export.h
+@@ -5,7 +5,7 @@
+ #ifndef BASE_BASE_EXPORT_H_
+ #define BASE_BASE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(BASE_IMPLEMENTATION)
+diff --git a/base/compiler_specific.h b/base/compiler_specific.h
+index 9da9f1113d6..15ae002aba7 100644
+--- a/base/compiler_specific.h
++++ b/base/compiler_specific.h
+@@ -732,7 +732,7 @@ inline constexpr bool AnalyzerAssumeTrue(bool arg) {
+ // TODO(crbug.com/42204008): Investigate, fix, and re-enable.
+ #if __has_cpp_attribute(clang::preserve_most) &&             \
+     (defined(ARCH_CPU_ARM64) || defined(ARCH_CPU_X86_64)) && \
+-    !defined(COMPONENT_BUILD) &&                             \
++    !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) &&                             \
+     !(BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64))
+ #define PRESERVE_MOST [[clang::preserve_most]]
+ #else
+diff --git a/base/component_export.h b/base/component_export.h
+index 649cf4517ad..64e0f2f603f 100644
+--- a/base/component_export.h
++++ b/base/component_export.h
+@@ -33,7 +33,7 @@
+ // Compiler-specific macros to annotate for export or import of a symbol. No-op
+ // in non-component builds. These should not see much if any direct use.
+ // Instead use the COMPONENT_EXPORT macro defined above.
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ #define COMPONENT_EXPORT_ANNOTATION __declspec(dllexport)
+ #define COMPONENT_IMPORT_ANNOTATION __declspec(dllimport)
+diff --git a/base/i18n/base_i18n_export.h b/base/i18n/base_i18n_export.h
+index ced66202d42..df653a55654 100644
+--- a/base/i18n/base_i18n_export.h
++++ b/base/i18n/base_i18n_export.h
+@@ -5,7 +5,7 @@
+ #ifndef BASE_I18N_BASE_I18N_EXPORT_H_
+ #define BASE_I18N_BASE_I18N_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(BASE_I18N_IMPLEMENTATION)
+diff --git a/build/config/BUILD.gn b/build/config/BUILD.gn
+index 91c1e7703bb..5d2fb7ba2bc 100644
+--- a/build/config/BUILD.gn
++++ b/build/config/BUILD.gn
+@@ -47,6 +47,9 @@ if (is_android) {
+ config("feature_flags") {
+   defines = []
+   rustflags = []
++  if (chromium_sdk_exports) {
++    defines += [ "CHROMIUM_SDK_EXPORTS" ]
++  }
+   if (dcheck_always_on) {
+     defines += [ "DCHECK_ALWAYS_ON=1" ]
+     rustflags += [ "-Cdebug-assertions" ]
+diff --git a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
+index a8dcb4d4675..b227b246417 100644
+--- a/build/config/BUILDCONFIG.gn
++++ b/build/config/BUILDCONFIG.gn
+@@ -170,6 +170,10 @@ declare_args() {
+   # https://chromium.googlesource.com/chromium/src/+/main/docs/component_build.md
+   is_component_build = is_debug && current_os != "android" &&
+                        current_os != "ios" && current_os != "watchos"
++
++  # Export from a non-component build's shared libraries what a component build exports between its
++  # components, for embedders that link Chromium as one shared library (chromium-sdk).
++  chromium_sdk_exports = false
+ }
+ 
+ assert(!(is_debug && is_official_build), "Can't do official debug builds")
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index c106acfca9f..da91022ee53 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -876,7 +876,9 @@ config("compiler") {
+ 
+     # TODO(crbug.com/40182783): investigate why this isn't effective on
+     # arm32.
+-    if (!is_android || current_cpu != "arm") {
++    # An SDK's embedders implement interfaces outside the library, which whole-program vtable
++    # optimisation would assume it sees all of.
++    if ((!is_android || current_cpu != "arm") && !chromium_sdk_exports) {
+       cflags += [ "-fwhole-program-vtables" ]
+ 
+       if (toolchain_supports_rust_thin_lto) {
+diff --git a/build/config/gcc/BUILD.gn b/build/config/gcc/BUILD.gn
+index a659210b196..8fee73418c4 100644
+--- a/build/config/gcc/BUILD.gn
++++ b/build/config/gcc/BUILD.gn
+@@ -81,7 +81,7 @@ config("rpath_for_built_shared_libraries") {
+   }
+ }
+ 
+-if (is_component_build && !is_android) {
++if ((is_component_build || chromium_sdk_exports) && !is_android) {
+   # See the rpath_for... config above for why this is necessary for component
+   # builds.
+   executable_and_shared_library_configs_ =
+diff --git a/build/config/mac/BUILD.gn b/build/config/mac/BUILD.gn
+index 7114fd817a7..e94c53f4a06 100644
+--- a/build/config/mac/BUILD.gn
++++ b/build/config/mac/BUILD.gn
+@@ -69,7 +69,7 @@ config("runtime_library") {
+ config("mac_dynamic_flags") {
+   ldflags = [ "-Wl,-ObjC" ]  # Always load Objective-C categories and classes.
+ 
+-  if (is_component_build) {
++  if (is_component_build || chromium_sdk_exports) {
+     ldflags += [
+       # Path for loading shared libraries for unbundled binaries.
+       "-Wl,-rpath,@loader_path/.",
+diff --git a/cc/animation/animation_export.h b/cc/animation/animation_export.h
+index d2495182ec5..0f0694767bd 100644
+--- a/cc/animation/animation_export.h
++++ b/cc/animation/animation_export.h
+@@ -5,7 +5,7 @@
+ #ifndef CC_ANIMATION_ANIMATION_EXPORT_H_
+ #define CC_ANIMATION_ANIMATION_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CC_ANIMATION_IMPLEMENTATION)
+diff --git a/cc/base/base_export.h b/cc/base/base_export.h
+index 87e41f03640..88ad5b16101 100644
+--- a/cc/base/base_export.h
++++ b/cc/base/base_export.h
+@@ -5,7 +5,7 @@
+ #ifndef CC_BASE_BASE_EXPORT_H_
+ #define CC_BASE_BASE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CC_BASE_IMPLEMENTATION)
+diff --git a/cc/cc_export.h b/cc/cc_export.h
+index 0c321a924f2..8b65b1b833e 100644
+--- a/cc/cc_export.h
++++ b/cc/cc_export.h
+@@ -5,7 +5,7 @@
+ #ifndef CC_CC_EXPORT_H_
+ #define CC_CC_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CC_IMPLEMENTATION)
+diff --git a/cc/debug/debug_export.h b/cc/debug/debug_export.h
+index 7c3bea1a485..77e1fbbc7ae 100644
+--- a/cc/debug/debug_export.h
++++ b/cc/debug/debug_export.h
+@@ -5,7 +5,7 @@
+ #ifndef CC_DEBUG_DEBUG_EXPORT_H_
+ #define CC_DEBUG_DEBUG_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CC_DEBUG_IMPLEMENTATION)
+diff --git a/cc/mojo_embedder/mojo_embedder_export.h b/cc/mojo_embedder/mojo_embedder_export.h
+index 825d24398e8..a0e57cef741 100644
+--- a/cc/mojo_embedder/mojo_embedder_export.h
++++ b/cc/mojo_embedder/mojo_embedder_export.h
+@@ -5,7 +5,7 @@
+ #ifndef CC_MOJO_EMBEDDER_MOJO_EMBEDDER_EXPORT_H_
+ #define CC_MOJO_EMBEDDER_MOJO_EMBEDDER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CC_MOJO_EMBEDDER_IMPLEMENTATION)
+diff --git a/cc/paint/paint_export.h b/cc/paint/paint_export.h
+index 7a935c9624a..9a9ed617283 100644
+--- a/cc/paint/paint_export.h
++++ b/cc/paint/paint_export.h
+@@ -5,7 +5,7 @@
+ #ifndef CC_PAINT_PAINT_EXPORT_H_
+ #define CC_PAINT_PAINT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CC_PAINT_IMPLEMENTATION)
+diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
+index f1d133b6cda..c7159fc107d 100644
+--- a/chrome/BUILD.gn
++++ b/chrome/BUILD.gn
+@@ -1115,6 +1115,7 @@ if (is_win) {
+       }
+       if (!use_v8_context_snapshot || include_both_v8_snapshots) {
+         sources += [ "$root_out_dir/snapshot_blob.bin" ]
++        public_deps += [ "//v8:run_mksnapshot_default" ]
+       }
+     }
+   }
+diff --git a/components/captive_portal/core/captive_portal_export.h b/components/captive_portal/core/captive_portal_export.h
+index 0c5613e4039..24203e1d3e2 100644
+--- a/components/captive_portal/core/captive_portal_export.h
++++ b/components/captive_portal/core/captive_portal_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_CAPTIVE_PORTAL_CORE_CAPTIVE_PORTAL_EXPORT_H_
+ #define COMPONENTS_CAPTIVE_PORTAL_CORE_CAPTIVE_PORTAL_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CAPTIVE_PORTAL_IMPLEMENTATION)
+diff --git a/components/capture_mode/capture_mode_export.h b/components/capture_mode/capture_mode_export.h
+index e13f9184b86..64412cbf135 100644
+--- a/components/capture_mode/capture_mode_export.h
++++ b/components/capture_mode/capture_mode_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_CAPTURE_MODE_CAPTURE_MODE_EXPORT_H_
+ #define COMPONENTS_CAPTURE_MODE_CAPTURE_MODE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CAPTURE_MODE_IMPLEMENTATION)
+diff --git a/components/cast/cast_component_export.h b/components/cast/cast_component_export.h
+index decebae8144..5dd0b2986c4 100644
+--- a/components/cast/cast_component_export.h
++++ b/components/cast/cast_component_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_CAST_CAST_COMPONENT_EXPORT_H_
+ #define COMPONENTS_CAST_CAST_COMPONENT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define CAST_COMPONENT_EXPORT __attribute__((visibility("default")))
+ #else  // !defined(COMPONENT_BUILD)
+ #define CAST_COMPONENT_EXPORT
+diff --git a/components/cbor/cbor_export.h b/components/cbor/cbor_export.h
+index 410d555d41c..37b2bd63a61 100644
+--- a/components/cbor/cbor_export.h
++++ b/components/cbor/cbor_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_CBOR_CBOR_EXPORT_H_
+ #define COMPONENTS_CBOR_CBOR_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CBOR_IMPLEMENTATION)
+diff --git a/components/crash/core/common/crash_export.h b/components/crash/core/common/crash_export.h
+index f13dc9c62d4..d6063e44c23 100644
+--- a/components/crash/core/common/crash_export.h
++++ b/components/crash/core/common/crash_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_CRASH_CORE_COMMON_CRASH_EXPORT_H_
+ #define COMPONENTS_CRASH_CORE_COMMON_CRASH_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CRASH_CORE_COMMON_IMPLEMENTATION)
+diff --git a/components/device_event_log/device_event_log_export.h b/components/device_event_log/device_event_log_export.h
+index 6ca238ada10..b4f69f8087c 100644
+--- a/components/device_event_log/device_event_log_export.h
++++ b/components/device_event_log/device_event_log_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_DEVICE_EVENT_LOG_DEVICE_EVENT_LOG_EXPORT_H_
+ #define COMPONENTS_DEVICE_EVENT_LOG_DEVICE_EVENT_LOG_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/components/discardable_memory/common/discardable_memory_export.h b/components/discardable_memory/common/discardable_memory_export.h
+index 630407064d2..f47e695ffa0 100644
+--- a/components/discardable_memory/common/discardable_memory_export.h
++++ b/components/discardable_memory/common/discardable_memory_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_DISCARDABLE_MEMORY_COMMON_DISCARDABLE_MEMORY_EXPORT_H_
+ #define COMPONENTS_DISCARDABLE_MEMORY_COMMON_DISCARDABLE_MEMORY_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(DISCARDABLE_MEMORY_IMPLEMENTATION)
+diff --git a/components/domain_reliability/domain_reliability_export.h b/components/domain_reliability/domain_reliability_export.h
+index 87b98d6d8c8..9d2dce667f7 100644
+--- a/components/domain_reliability/domain_reliability_export.h
++++ b/components/domain_reliability/domain_reliability_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_DOMAIN_RELIABILITY_DOMAIN_RELIABILITY_EXPORT_H_
+ #define COMPONENTS_DOMAIN_RELIABILITY_DOMAIN_RELIABILITY_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(DOMAIN_RELIABILITY_IMPLEMENTATION)
+diff --git a/components/download/public/common/download_export.h b/components/download/public/common/download_export.h
+index 4be8087d250..de1fa6f93b2 100644
+--- a/components/download/public/common/download_export.h
++++ b/components/download/public/common/download_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_DOWNLOAD_PUBLIC_COMMON_DOWNLOAD_EXPORT_H_
+ #define COMPONENTS_DOWNLOAD_PUBLIC_COMMON_DOWNLOAD_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(COMPONENTS_DOWNLOAD_IMPLEMENTATION)
+diff --git a/components/drive/drive_export.h b/components/drive/drive_export.h
+index 5d1fa02a1c1..e70542e7b49 100644
+--- a/components/drive/drive_export.h
++++ b/components/drive/drive_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_DRIVE_DRIVE_EXPORT_H_
+ #define COMPONENTS_DRIVE_DRIVE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(COMPONENTS_DRIVE_IMPLEMENTATION)
+diff --git a/components/gcm_driver/common/gcm_driver_export.h b/components/gcm_driver/common/gcm_driver_export.h
+index 9c767a3bdf5..2e7184c9aa9 100644
+--- a/components/gcm_driver/common/gcm_driver_export.h
++++ b/components/gcm_driver/common/gcm_driver_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_GCM_DRIVER_COMMON_GCM_DRIVER_EXPORT_H_
+ #define COMPONENTS_GCM_DRIVER_COMMON_GCM_DRIVER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GCM_DRIVER_IMPLEMENTATION)
+diff --git a/components/gwp_asan/client/export.h b/components/gwp_asan/client/export.h
+index 052dba52ed8..150c34a2933 100644
+--- a/components/gwp_asan/client/export.h
++++ b/components/gwp_asan/client/export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_GWP_ASAN_CLIENT_EXPORT_H_
+ #define COMPONENTS_GWP_ASAN_CLIENT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GWP_ASAN_IMPLEMENTATION)
+diff --git a/components/keyed_service/core/keyed_service_export.h b/components/keyed_service/core/keyed_service_export.h
+index 5edd1c76448..9d915343c94 100644
+--- a/components/keyed_service/core/keyed_service_export.h
++++ b/components/keyed_service/core/keyed_service_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_KEYED_SERVICE_CORE_KEYED_SERVICE_EXPORT_H_
+ #define COMPONENTS_KEYED_SERVICE_CORE_KEYED_SERVICE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(KEYED_SERVICE_IMPLEMENTATION)
+diff --git a/components/login/login_export.h b/components/login/login_export.h
+index 2203d3c4d0d..88f21027441 100644
+--- a/components/login/login_export.h
++++ b/components/login/login_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_LOGIN_LOGIN_EXPORT_H_
+ #define COMPONENTS_LOGIN_LOGIN_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/components/metal_util/metal_util_export.h b/components/metal_util/metal_util_export.h
+index e027220bc7c..a98be838329 100644
+--- a/components/metal_util/metal_util_export.h
++++ b/components/metal_util/metal_util_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_METAL_UTIL_METAL_UTIL_EXPORT_H_
+ #define COMPONENTS_METAL_UTIL_METAL_UTIL_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(METAL_UTIL_IMPLEMENTATION)
+diff --git a/components/network_session_configurator/common/network_session_configurator_export.h b/components/network_session_configurator/common/network_session_configurator_export.h
+index 7ee21dc4004..f9560cd5a49 100644
+--- a/components/network_session_configurator/common/network_session_configurator_export.h
++++ b/components/network_session_configurator/common/network_session_configurator_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_NETWORK_SESSION_CONFIGURATOR_COMMON_NETWORK_SESSION_CONFIGURATOR_EXPORT_H_
+ #define COMPONENTS_NETWORK_SESSION_CONFIGURATOR_COMMON_NETWORK_SESSION_CONFIGURATOR_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/components/on_load_script_injector/export.h b/components/on_load_script_injector/export.h
+index 4c0d27879f7..4ca1bf7869d 100644
+--- a/components/on_load_script_injector/export.h
++++ b/components/on_load_script_injector/export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_ON_LOAD_SCRIPT_INJECTOR_EXPORT_H_
+ #define COMPONENTS_ON_LOAD_SCRIPT_INJECTOR_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD) && defined(ON_LOAD_SCRIPT_INJECTOR_IMPLEMENTATION)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(ON_LOAD_SCRIPT_INJECTOR_IMPLEMENTATION)
+ #define ON_LOAD_SCRIPT_INJECTOR_EXPORT __attribute__((visibility("default")))
+ #else  // !defined(COMPONENT_BUILD) ||
+        // !defined(ON_LOAD_SCRIPT_INJECTOR_IMPLEMENTATION)
+diff --git a/components/ownership/ownership_export.h b/components/ownership/ownership_export.h
+index c259a1ce19a..f7646391c5a 100644
+--- a/components/ownership/ownership_export.h
++++ b/components/ownership/ownership_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_OWNERSHIP_OWNERSHIP_EXPORT_H_
+ #define COMPONENTS_OWNERSHIP_OWNERSHIP_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/components/policy/policy_export.h b/components/policy/policy_export.h
+index 1e52705c473..a7918f28846 100644
+--- a/components/policy/policy_export.h
++++ b/components/policy/policy_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_POLICY_POLICY_EXPORT_H_
+ #define COMPONENTS_POLICY_POLICY_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/components/policy/proto/policy_proto_export.h b/components/policy/proto/policy_proto_export.h
+index 16dc5fe5931..c9191d79d87 100644
+--- a/components/policy/proto/policy_proto_export.h
++++ b/components/policy/proto/policy_proto_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_POLICY_PROTO_POLICY_PROTO_EXPORT_H_
+ #define COMPONENTS_POLICY_PROTO_POLICY_PROTO_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/components/prefs/prefs_export.h b/components/prefs/prefs_export.h
+index 2086ffc4095..151ec17ef8d 100644
+--- a/components/prefs/prefs_export.h
++++ b/components/prefs/prefs_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_PREFS_PREFS_EXPORT_H_
+ #define COMPONENTS_PREFS_PREFS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(COMPONENTS_PREFS_IMPLEMENTATION)
+diff --git a/components/proxy_config/proxy_config_export.h b/components/proxy_config/proxy_config_export.h
+index 0f82367e983..ab9598d9ba9 100644
+--- a/components/proxy_config/proxy_config_export.h
++++ b/components/proxy_config/proxy_config_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_PROXY_CONFIG_PROXY_CONFIG_EXPORT_H_
+ #define COMPONENTS_PROXY_CONFIG_PROXY_CONFIG_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(PROXY_CONFIG_IMPLEMENTATION)
+diff --git a/components/quirks/quirks_export.h b/components/quirks/quirks_export.h
+index ba724142523..a231fb89d85 100644
+--- a/components/quirks/quirks_export.h
++++ b/components/quirks/quirks_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_QUIRKS_QUIRKS_EXPORT_H_
+ #define COMPONENTS_QUIRKS_QUIRKS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(QUIRKS_IMPLEMENTATION)
+diff --git a/components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h b/components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h
+index 6bbaa9b79ad..f489284d4ee 100644
+--- a/components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h
++++ b/components/remote_cocoa/app_shim/remote_cocoa_app_shim_export.h
+@@ -8,7 +8,7 @@
+ // Defines REMOTE_COCOA_APP_SHIM_EXPORT so that functionality implemented by the
+ // RemoteCocoa app shim module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define REMOTE_COCOA_APP_SHIM_EXPORT __attribute__((visibility("default")))
+ 
+ #else  // defined(COMPONENT_BUILD)
+diff --git a/components/remote_cocoa/browser/remote_cocoa_browser_export.h b/components/remote_cocoa/browser/remote_cocoa_browser_export.h
+index 3759f737601..f85f2bcdd0a 100644
+--- a/components/remote_cocoa/browser/remote_cocoa_browser_export.h
++++ b/components/remote_cocoa/browser/remote_cocoa_browser_export.h
+@@ -8,7 +8,7 @@
+ // Defines REMOTE_COCOA_BROWSER_EXPORT so that functionality implemented by the
+ // RemoteCocoa browser  module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define REMOTE_COCOA_BROWSER_EXPORT __attribute__((visibility("default")))
+ 
+ #else  // defined(COMPONENT_BUILD)
+diff --git a/components/session_manager/session_manager_export.h b/components/session_manager/session_manager_export.h
+index 406679ade35..111ad45b641 100644
+--- a/components/session_manager/session_manager_export.h
++++ b/components/session_manager/session_manager_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_SESSION_MANAGER_SESSION_MANAGER_EXPORT_H_
+ #define COMPONENTS_SESSION_MANAGER_SESSION_MANAGER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SESSION_IMPLEMENTATION)
+diff --git a/components/sessions/core/sessions_export.h b/components/sessions/core/sessions_export.h
+index 4978bb5aa04..2a46c43263d 100644
+--- a/components/sessions/core/sessions_export.h
++++ b/components/sessions/core/sessions_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_SESSIONS_CORE_SESSIONS_EXPORT_H_
+ #define COMPONENTS_SESSIONS_CORE_SESSIONS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SESSIONS_IMPLEMENTATION)
+diff --git a/components/tracing/tracing_export.h b/components/tracing/tracing_export.h
+index 517571118e0..f0713a5f78a 100644
+--- a/components/tracing/tracing_export.h
++++ b/components/tracing/tracing_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_TRACING_TRACING_EXPORT_H_
+ #define COMPONENTS_TRACING_TRACING_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(TRACING_IMPLEMENTATION)
+diff --git a/components/ui_devtools/devtools_export.h b/components/ui_devtools/devtools_export.h
+index ab393500f63..4da2ba60490 100644
+--- a/components/ui_devtools/devtools_export.h
++++ b/components/ui_devtools/devtools_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_UI_DEVTOOLS_DEVTOOLS_EXPORT_H_
+ #define COMPONENTS_UI_DEVTOOLS_DEVTOOLS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(UI_DEVTOOLS_IMPLEMENTATION)
+diff --git a/components/url_matcher/url_matcher_export.h b/components/url_matcher/url_matcher_export.h
+index 54ff967f501..5df637415d9 100644
+--- a/components/url_matcher/url_matcher_export.h
++++ b/components/url_matcher/url_matcher_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_URL_MATCHER_URL_MATCHER_EXPORT_H_
+ #define COMPONENTS_URL_MATCHER_URL_MATCHER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(URL_MATCHER_IMPLEMENTATION)
+diff --git a/components/user_manager/user_manager_export.h b/components/user_manager/user_manager_export.h
+index 51f149a1942..e73792cd2fc 100644
+--- a/components/user_manager/user_manager_export.h
++++ b/components/user_manager/user_manager_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_USER_MANAGER_USER_MANAGER_EXPORT_H_
+ #define COMPONENTS_USER_MANAGER_USER_MANAGER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(USER_MANAGER_IMPLEMENTATION)
+diff --git a/components/user_prefs/user_prefs_export.h b/components/user_prefs/user_prefs_export.h
+index a0be0f6b1f7..4fcb62c3aeb 100644
+--- a/components/user_prefs/user_prefs_export.h
++++ b/components/user_prefs/user_prefs_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_USER_PREFS_USER_PREFS_EXPORT_H_
+ #define COMPONENTS_USER_PREFS_USER_PREFS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(USER_PREFS_IMPLEMENTATION)
+diff --git a/components/viz/client/viz_client_export.h b/components/viz/client/viz_client_export.h
+index 006adf58ab2..cd775e0da4b 100644
+--- a/components/viz/client/viz_client_export.h
++++ b/components/viz/client/viz_client_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_VIZ_CLIENT_VIZ_CLIENT_EXPORT_H_
+ #define COMPONENTS_VIZ_CLIENT_VIZ_CLIENT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIZ_CLIENT_IMPLEMENTATION)
+diff --git a/components/viz/common/viz_common_export.h b/components/viz/common/viz_common_export.h
+index f435520944f..5a77986a520 100644
+--- a/components/viz/common/viz_common_export.h
++++ b/components/viz/common/viz_common_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_VIZ_COMMON_VIZ_COMMON_EXPORT_H_
+ #define COMPONENTS_VIZ_COMMON_VIZ_COMMON_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIZ_COMMON_IMPLEMENTATION)
+diff --git a/components/viz/common/viz_vulkan_context_provider_export.h b/components/viz/common/viz_vulkan_context_provider_export.h
+index 8919cc7ef5f..18e2632d0ed 100644
+--- a/components/viz/common/viz_vulkan_context_provider_export.h
++++ b/components/viz/common/viz_vulkan_context_provider_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_VIZ_COMMON_VIZ_VULKAN_CONTEXT_PROVIDER_EXPORT_H_
+ #define COMPONENTS_VIZ_COMMON_VIZ_VULKAN_CONTEXT_PROVIDER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIZ_VULKAN_CONTEXT_PROVIDER_IMPLEMENTATION)
+diff --git a/components/viz/host/viz_host_export.h b/components/viz/host/viz_host_export.h
+index 9913f10948e..f89a6d737b7 100644
+--- a/components/viz/host/viz_host_export.h
++++ b/components/viz/host/viz_host_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_VIZ_HOST_VIZ_HOST_EXPORT_H_
+ #define COMPONENTS_VIZ_HOST_VIZ_HOST_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIZ_HOST_IMPLEMENTATION)
+diff --git a/components/viz/service/viz_service_export.h b/components/viz/service/viz_service_export.h
+index 2a56680f797..e467fb6ed98 100644
+--- a/components/viz/service/viz_service_export.h
++++ b/components/viz/service/viz_service_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_VIZ_SERVICE_VIZ_SERVICE_EXPORT_H_
+ #define COMPONENTS_VIZ_SERVICE_VIZ_SERVICE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIZ_SERVICE_IMPLEMENTATION)
+diff --git a/components/web_modal/web_modal_export.h b/components/web_modal/web_modal_export.h
+index 0a4f33063b4..3f99922880c 100644
+--- a/components/web_modal/web_modal_export.h
++++ b/components/web_modal/web_modal_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_WEB_MODAL_WEB_MODAL_EXPORT_H_
+ #define COMPONENTS_WEB_MODAL_WEB_MODAL_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WEB_MODAL_IMPLEMENTATION)
+diff --git a/components/webdata/common/webdata_export.h b/components/webdata/common/webdata_export.h
+index 1a4b2eedec3..a7bfc7c9745 100644
+--- a/components/webdata/common/webdata_export.h
++++ b/components/webdata/common/webdata_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_WEBDATA_COMMON_WEBDATA_EXPORT_H_
+ #define COMPONENTS_WEBDATA_COMMON_WEBDATA_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WEBDATA_IMPLEMENTATION)
+diff --git a/components/wifi/wifi_export.h b/components/wifi/wifi_export.h
+index 9dc2ce354a2..21204f3909f 100644
+--- a/components/wifi/wifi_export.h
++++ b/components/wifi/wifi_export.h
+@@ -5,7 +5,7 @@
+ #ifndef COMPONENTS_WIFI_WIFI_EXPORT_H_
+ #define COMPONENTS_WIFI_WIFI_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WIFI_IMPLEMENTATION)
+diff --git a/content/common/content_export.h b/content/common/content_export.h
+index c4245cfea14..7224db234d2 100644
+--- a/content/common/content_export.h
++++ b/content/common/content_export.h
+@@ -5,7 +5,7 @@
+ #ifndef CONTENT_COMMON_CONTENT_EXPORT_H_
+ #define CONTENT_COMMON_CONTENT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD) && !defined(COMPILE_CONTENT_STATICALLY)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && !defined(COMPILE_CONTENT_STATICALLY)
+ #if defined(WIN32)
+ 
+ #if defined(CONTENT_IMPLEMENTATION)
+diff --git a/crypto/crypto_export.h b/crypto/crypto_export.h
+index 186d294bed4..48cd50cfbb2 100644
+--- a/crypto/crypto_export.h
++++ b/crypto/crypto_export.h
+@@ -8,7 +8,7 @@
+ // Defines CRYPTO_EXPORT so that functionality implemented by the crypto module
+ // can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CRYPTO_IMPLEMENTATION)
+diff --git a/dbus/dbus_export.h b/dbus/dbus_export.h
+index 029b7ecd29b..3d26cab753d 100644
+--- a/dbus/dbus_export.h
++++ b/dbus/dbus_export.h
+@@ -14,7 +14,7 @@
+ #error dbus support is not currently expected to work on windows
+ #endif  // defined(WIN32)
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define CHROME_DBUS_EXPORT __attribute__((visibility("default")))
+ #else  // !defined(COMPONENT_BUILD)
+ #define CHROME_DBUS_EXPORT
+diff --git a/device/base/device_base_export.h b/device/base/device_base_export.h
+index f7d7453925d..f0c059ca8fe 100644
+--- a/device/base/device_base_export.h
++++ b/device/base/device_base_export.h
+@@ -5,7 +5,7 @@
+ #ifndef DEVICE_BASE_DEVICE_BASE_EXPORT_H_
+ #define DEVICE_BASE_DEVICE_BASE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD) && defined(WIN32)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)
+ 
+ #if defined(DEVICE_BASE_IMPLEMENTATION)
+ #define DEVICE_BASE_EXPORT __declspec(dllexport)
+@@ -13,7 +13,7 @@
+ #define DEVICE_BASE_EXPORT __declspec(dllimport)
+ #endif
+ 
+-#elif defined(COMPONENT_BUILD) && !defined(WIN32)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && !defined(WIN32)
+ 
+ #define DEVICE_BASE_EXPORT __attribute__((visibility("default")))
+ 
+diff --git a/device/bluetooth/bluetooth_export.h b/device/bluetooth/bluetooth_export.h
+index 69af504b936..eddf0879bfb 100644
+--- a/device/bluetooth/bluetooth_export.h
++++ b/device/bluetooth/bluetooth_export.h
+@@ -5,7 +5,7 @@
+ #ifndef DEVICE_BLUETOOTH_BLUETOOTH_EXPORT_H_
+ #define DEVICE_BLUETOOTH_BLUETOOTH_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD) && defined(WIN32)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)
+ 
+ #if defined(DEVICE_BLUETOOTH_IMPLEMENTATION)
+ #define DEVICE_BLUETOOTH_EXPORT __declspec(dllexport)
+@@ -13,7 +13,7 @@
+ #define DEVICE_BLUETOOTH_EXPORT __declspec(dllimport)
+ #endif
+ 
+-#elif defined(COMPONENT_BUILD) && !defined(WIN32)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && !defined(WIN32)
+ 
+ #define DEVICE_BLUETOOTH_EXPORT __attribute__((visibility("default")))
+ 
+diff --git a/device/bluetooth/public/cpp/bluetooth_features_export.h b/device/bluetooth/public/cpp/bluetooth_features_export.h
+index b8ec043cd88..8dffc58f9e5 100644
+--- a/device/bluetooth/public/cpp/bluetooth_features_export.h
++++ b/device/bluetooth/public/cpp/bluetooth_features_export.h
+@@ -5,7 +5,7 @@
+ #ifndef DEVICE_BLUETOOTH_PUBLIC_CPP_BLUETOOTH_FEATURES_EXPORT_H_
+ #define DEVICE_BLUETOOTH_PUBLIC_CPP_BLUETOOTH_FEATURES_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/device/gamepad/gamepad_export.h b/device/gamepad/gamepad_export.h
+index 1d6cf2dc142..a0d31a867f7 100644
+--- a/device/gamepad/gamepad_export.h
++++ b/device/gamepad/gamepad_export.h
+@@ -5,7 +5,7 @@
+ #ifndef DEVICE_GAMEPAD_GAMEPAD_EXPORT_H_
+ #define DEVICE_GAMEPAD_GAMEPAD_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD) && defined(WIN32)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)
+ 
+ #if defined(DEVICE_GAMEPAD_IMPLEMENTATION)
+ #define DEVICE_GAMEPAD_EXPORT __declspec(dllexport)
+@@ -13,7 +13,7 @@
+ #define DEVICE_GAMEPAD_EXPORT __declspec(dllimport)
+ #endif
+ 
+-#elif defined(COMPONENT_BUILD) && !defined(WIN32)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && !defined(WIN32)
+ 
+ #define DEVICE_GAMEPAD_EXPORT __attribute__((visibility("default")))
+ 
+diff --git a/device/gamepad/public/cpp/gamepad_features_export.h b/device/gamepad/public/cpp/gamepad_features_export.h
+index a76995236d1..62555218196 100644
+--- a/device/gamepad/public/cpp/gamepad_features_export.h
++++ b/device/gamepad/public/cpp/gamepad_features_export.h
+@@ -5,7 +5,7 @@
+ #ifndef DEVICE_GAMEPAD_PUBLIC_CPP_GAMEPAD_FEATURES_EXPORT_H_
+ #define DEVICE_GAMEPAD_PUBLIC_CPP_GAMEPAD_FEATURES_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/device/vr/vr_export.h b/device/vr/vr_export.h
+index adc9426233b..705e2226ec1 100644
+--- a/device/vr/vr_export.h
++++ b/device/vr/vr_export.h
+@@ -5,7 +5,7 @@
+ #ifndef DEVICE_VR_VR_EXPORT_H_
+ #define DEVICE_VR_VR_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD) && defined(WIN32)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)
+ 
+ #if defined(DEVICE_VR_IMPLEMENTATION)
+ #define DEVICE_VR_EXPORT __declspec(dllexport)
+@@ -13,7 +13,7 @@
+ #define DEVICE_VR_EXPORT __declspec(dllimport)
+ #endif
+ 
+-#elif defined(COMPONENT_BUILD) && !defined(WIN32)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && !defined(WIN32)
+ 
+ #define DEVICE_VR_EXPORT __attribute__((visibility("default")))
+ 
+diff --git a/extensions/common/extensions_export.h b/extensions/common/extensions_export.h
+index 1f2cb671eec..a2e7ced823b 100644
+--- a/extensions/common/extensions_export.h
++++ b/extensions/common/extensions_export.h
+@@ -5,7 +5,7 @@
+ #ifndef EXTENSIONS_COMMON_EXTENSIONS_EXPORT_H_
+ #define EXTENSIONS_COMMON_EXTENSIONS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/gin/gin_export.h b/gin/gin_export.h
+index 9aa36fe1807..c475c09e903 100644
+--- a/gin/gin_export.h
++++ b/gin/gin_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GIN_GIN_EXPORT_H_
+ #define GIN_GIN_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GIN_IMPLEMENTATION)
+diff --git a/google_apis/gcm/base/gcm_export.h b/google_apis/gcm/base/gcm_export.h
+index 82e0f3335d5..050324cb89e 100644
+--- a/google_apis/gcm/base/gcm_export.h
++++ b/google_apis/gcm/base/gcm_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GOOGLE_APIS_GCM_BASE_GCM_EXPORT_H_
+ #define GOOGLE_APIS_GCM_BASE_GCM_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GCM_IMPLEMENTATION)
+diff --git a/gpu/command_buffer/client/gles2_c_lib_export.h b/gpu/command_buffer/client/gles2_c_lib_export.h
+index 3d6449aaeaf..1fa6b34e23a 100644
+--- a/gpu/command_buffer/client/gles2_c_lib_export.h
++++ b/gpu/command_buffer/client/gles2_c_lib_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_COMMAND_BUFFER_CLIENT_GLES2_C_LIB_EXPORT_H_
+ #define GPU_COMMAND_BUFFER_CLIENT_GLES2_C_LIB_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GLES2_C_LIB_IMPLEMENTATION)
+diff --git a/gpu/command_buffer/client/gles2_impl_export.h b/gpu/command_buffer/client/gles2_impl_export.h
+index 0f6ee0d3d38..e159eca31a8 100644
+--- a/gpu/command_buffer/client/gles2_impl_export.h
++++ b/gpu/command_buffer/client/gles2_impl_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_COMMAND_BUFFER_CLIENT_GLES2_IMPL_EXPORT_H_
+ #define GPU_COMMAND_BUFFER_CLIENT_GLES2_IMPL_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GLES2_IMPL_IMPLEMENTATION)
+diff --git a/gpu/command_buffer/client/gpu_command_buffer_client_export.h b/gpu/command_buffer/client/gpu_command_buffer_client_export.h
+index 9c17f849923..77d31c7d843 100644
+--- a/gpu/command_buffer/client/gpu_command_buffer_client_export.h
++++ b/gpu/command_buffer/client/gpu_command_buffer_client_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_COMMAND_BUFFER_CLIENT_GPU_COMMAND_BUFFER_CLIENT_EXPORT_H_
+ #define GPU_COMMAND_BUFFER_CLIENT_GPU_COMMAND_BUFFER_CLIENT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_COMMAND_BUFFER_CLIENT_IMPLEMENTATION)
+diff --git a/gpu/command_buffer/client/webgpu_export.h b/gpu/command_buffer/client/webgpu_export.h
+index 9483a945310..871a2441710 100644
+--- a/gpu/command_buffer/client/webgpu_export.h
++++ b/gpu/command_buffer/client/webgpu_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_COMMAND_BUFFER_CLIENT_WEBGPU_EXPORT_H_
+ #define GPU_COMMAND_BUFFER_CLIENT_WEBGPU_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WEBGPU_IMPLEMENTATION)
+diff --git a/gpu/command_buffer/common/gles2_utils_export.h b/gpu/command_buffer/common/gles2_utils_export.h
+index bcbe73f7ac2..50d365103bb 100644
+--- a/gpu/command_buffer/common/gles2_utils_export.h
++++ b/gpu/command_buffer/common/gles2_utils_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_COMMAND_BUFFER_COMMON_GLES2_UTILS_EXPORT_H_
+ #define GPU_COMMAND_BUFFER_COMMON_GLES2_UTILS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GLES2_UTILS_IMPLEMENTATION)
+diff --git a/gpu/command_buffer/common/gpu_command_buffer_common_export.h b/gpu/command_buffer/common/gpu_command_buffer_common_export.h
+index 894f9db8b0a..4bcd82eeddb 100644
+--- a/gpu/command_buffer/common/gpu_command_buffer_common_export.h
++++ b/gpu/command_buffer/common/gpu_command_buffer_common_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_COMMAND_BUFFER_COMMON_GPU_COMMAND_BUFFER_COMMON_EXPORT_H_
+ #define GPU_COMMAND_BUFFER_COMMON_GPU_COMMAND_BUFFER_COMMON_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_COMMAND_BUFFER_COMMON_IMPLEMENTATION)
+diff --git a/gpu/command_buffer/service/gpu_command_buffer_service_export.h b/gpu/command_buffer/service/gpu_command_buffer_service_export.h
+index 7ea2cb2136d..ef094427949 100644
+--- a/gpu/command_buffer/service/gpu_command_buffer_service_export.h
++++ b/gpu/command_buffer/service/gpu_command_buffer_service_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_COMMAND_BUFFER_SERVICE_GPU_COMMAND_BUFFER_SERVICE_EXPORT_H_
+ #define GPU_COMMAND_BUFFER_SERVICE_GPU_COMMAND_BUFFER_SERVICE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_COMMAND_BUFFER_SERVICE_IMPLEMENTATION)
+diff --git a/gpu/config/gpu_config_export.h b/gpu/config/gpu_config_export.h
+index 67b51fdf5ee..91c6174ac45 100644
+--- a/gpu/config/gpu_config_export.h
++++ b/gpu/config/gpu_config_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_CONFIG_GPU_CONFIG_EXPORT_H_
+ #define GPU_CONFIG_GPU_CONFIG_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_CONFIG_IMPLEMENTATION)
+diff --git a/gpu/gpu_export.h b/gpu/gpu_export.h
+index 8072ba09656..63fa765d4d2 100644
+--- a/gpu/gpu_export.h
++++ b/gpu/gpu_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_GPU_EXPORT_H_
+ #define GPU_GPU_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_IMPLEMENTATION)
+diff --git a/gpu/gpu_gles2_export.h b/gpu/gpu_gles2_export.h
+index f5cfa470703..0d98131952f 100644
+--- a/gpu/gpu_gles2_export.h
++++ b/gpu/gpu_gles2_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_GPU_GLES2_EXPORT_H_
+ #define GPU_GPU_GLES2_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_GLES2_IMPLEMENTATION)
+diff --git a/gpu/gpu_util_export.h b/gpu/gpu_util_export.h
+index fa22faa503e..18c8b3fcfe2 100644
+--- a/gpu/gpu_util_export.h
++++ b/gpu/gpu_util_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_GPU_UTIL_EXPORT_H_
+ #define GPU_GPU_UTIL_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_UTIL_IMPLEMENTATION)
+diff --git a/gpu/ipc/client/gpu_ipc_client_export.h b/gpu/ipc/client/gpu_ipc_client_export.h
+index 51774030e22..8921af15372 100644
+--- a/gpu/ipc/client/gpu_ipc_client_export.h
++++ b/gpu/ipc/client/gpu_ipc_client_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_IPC_CLIENT_GPU_IPC_CLIENT_EXPORT_H_
+ #define GPU_IPC_CLIENT_GPU_IPC_CLIENT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_IPC_CLIENT_IMPLEMENTATION)
+diff --git a/gpu/ipc/common/gpu_ipc_common_export.h b/gpu/ipc/common/gpu_ipc_common_export.h
+index e3cbf13695a..7648e9dcb56 100644
+--- a/gpu/ipc/common/gpu_ipc_common_export.h
++++ b/gpu/ipc/common/gpu_ipc_common_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_IPC_COMMON_GPU_IPC_COMMON_EXPORT_H_
+ #define GPU_IPC_COMMON_GPU_IPC_COMMON_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_IMPLEMENTATION)
+diff --git a/gpu/ipc/gl_in_process_context_export.h b/gpu/ipc/gl_in_process_context_export.h
+index db9ea371135..bc02dbd0978 100644
+--- a/gpu/ipc/gl_in_process_context_export.h
++++ b/gpu/ipc/gl_in_process_context_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_IPC_GL_IN_PROCESS_CONTEXT_EXPORT_H_
+ #define GPU_IPC_GL_IN_PROCESS_CONTEXT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GL_IN_PROCESS_CONTEXT_IMPLEMENTATION)
+diff --git a/gpu/ipc/service/gpu_ipc_service_export.h b/gpu/ipc/service/gpu_ipc_service_export.h
+index 65bcd55e970..74f05289b78 100644
+--- a/gpu/ipc/service/gpu_ipc_service_export.h
++++ b/gpu/ipc/service/gpu_ipc_service_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_IPC_SERVICE_GPU_IPC_SERVICE_EXPORT_H_
+ #define GPU_IPC_SERVICE_GPU_IPC_SERVICE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GPU_IPC_SERVICE_IMPLEMENTATION)
+diff --git a/gpu/raster_export.h b/gpu/raster_export.h
+index a6649cf3354..9fb318cd1ca 100644
+--- a/gpu/raster_export.h
++++ b/gpu/raster_export.h
+@@ -5,7 +5,7 @@
+ #ifndef GPU_RASTER_EXPORT_H_
+ #define GPU_RASTER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(RASTER_IMPLEMENTATION)
+diff --git a/headless/public/headless_export.h b/headless/public/headless_export.h
+index 36ba5c26beb..c2e5a0d1765 100644
+--- a/headless/public/headless_export.h
++++ b/headless/public/headless_export.h
+@@ -5,7 +5,7 @@
+ #ifndef HEADLESS_PUBLIC_HEADLESS_EXPORT_H_
+ #define HEADLESS_PUBLIC_HEADLESS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(HEADLESS_IMPLEMENTATION)
+diff --git a/ipc/ipc_message_support_export.h b/ipc/ipc_message_support_export.h
+index 0b4510014b5..9dc91b6b661 100644
+--- a/ipc/ipc_message_support_export.h
++++ b/ipc/ipc_message_support_export.h
+@@ -5,7 +5,7 @@
+ #ifndef IPC_IPC_MESSAGE_SUPPORT_EXPORT_H_
+ #define IPC_IPC_MESSAGE_SUPPORT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(IPC_MESSAGE_SUPPORT_IMPL)
+diff --git a/media/capture/capture_export.h b/media/capture/capture_export.h
+index 5c07a4c8ea4..419c9ddf29a 100644
+--- a/media/capture/capture_export.h
++++ b/media/capture/capture_export.h
+@@ -5,7 +5,7 @@
+ #ifndef MEDIA_CAPTURE_CAPTURE_EXPORT_H_
+ #define MEDIA_CAPTURE_CAPTURE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CAPTURE_IMPLEMENTATION)
+diff --git a/media/gpu/media_gpu_export.h b/media/gpu/media_gpu_export.h
+index 7ed33b7cdf5..d5579c86ee5 100644
+--- a/media/gpu/media_gpu_export.h
++++ b/media/gpu/media_gpu_export.h
+@@ -8,7 +8,7 @@
+ // Define MEDIA_GPU_EXPORT so that functionality implemented by the Media GPU
+ // module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(MEDIA_GPU_IMPLEMENTATION)
+diff --git a/media/midi/midi_export.h b/media/midi/midi_export.h
+index bb4b5338f9e..1bdf81804ff 100644
+--- a/media/midi/midi_export.h
++++ b/media/midi/midi_export.h
+@@ -5,7 +5,7 @@
+ #ifndef MEDIA_MIDI_MIDI_EXPORT_H_
+ #define MEDIA_MIDI_MIDI_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(MIDI_IMPLEMENTATION)
+diff --git a/mojo/core/system_impl_export.h b/mojo/core/system_impl_export.h
+index 717f442260d..ff62b1632de 100644
+--- a/mojo/core/system_impl_export.h
++++ b/mojo/core/system_impl_export.h
+@@ -8,7 +8,7 @@
+ #if defined(MOJO_CORE_SHARED_LIBRARY)
+ #define MOJO_SYSTEM_IMPL_EXPORT
+ #else
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(MOJO_SYSTEM_IMPL_IMPLEMENTATION)
+diff --git a/mojo/public/c/system/system_export.h b/mojo/public/c/system/system_export.h
+index 6529e19271c..c419d4f1253 100644
+--- a/mojo/public/c/system/system_export.h
++++ b/mojo/public/c/system/system_export.h
+@@ -5,7 +5,7 @@
+ #ifndef MOJO_PUBLIC_C_SYSTEM_SYSTEM_EXPORT_H_
+ #define MOJO_PUBLIC_C_SYSTEM_SYSTEM_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(MOJO_SYSTEM_IMPLEMENTATION)
+diff --git a/mojo/public/cpp/system/system_export.h b/mojo/public/cpp/system/system_export.h
+index 808b1255f59..aa5fdf91fe2 100644
+--- a/mojo/public/cpp/system/system_export.h
++++ b/mojo/public/cpp/system/system_export.h
+@@ -5,7 +5,7 @@
+ #ifndef MOJO_PUBLIC_CPP_SYSTEM_SYSTEM_EXPORT_H_
+ #define MOJO_PUBLIC_CPP_SYSTEM_SYSTEM_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/net/base/net_export.h b/net/base/net_export.h
+index ca64828ac97..cb97d7bd2bd 100644
+--- a/net/base/net_export.h
++++ b/net/base/net_export.h
+@@ -9,7 +9,7 @@
+ // be exported to consumers, and NET_EXPORT_PRIVATE that allows unit tests to
+ // access features not intended to be used directly by real consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(NET_IMPLEMENTATION)
+diff --git a/sandbox/mac/seatbelt_export.h b/sandbox/mac/seatbelt_export.h
+index 4167d930662..6a54ad82c82 100644
+--- a/sandbox/mac/seatbelt_export.h
++++ b/sandbox/mac/seatbelt_export.h
+@@ -5,7 +5,7 @@
+ #ifndef SANDBOX_MAC_SEATBELT_EXPORT_H_
+ #define SANDBOX_MAC_SEATBELT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #define SEATBELT_EXPORT __attribute__((visibility("default")))
+ 
+diff --git a/sandbox/policy/export.h b/sandbox/policy/export.h
+index 5546afb7902..786fbe50310 100644
+--- a/sandbox/policy/export.h
++++ b/sandbox/policy/export.h
+@@ -5,7 +5,7 @@
+ #ifndef SANDBOX_POLICY_EXPORT_H_
+ #define SANDBOX_POLICY_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SANDBOX_POLICY_IMPL)
+diff --git a/sandbox/sandbox_export.h b/sandbox/sandbox_export.h
+index 443da7b5c69..861dfb717ff 100644
+--- a/sandbox/sandbox_export.h
++++ b/sandbox/sandbox_export.h
+@@ -9,7 +9,7 @@
+ #error "sandbox_export.h does not support WIN32."
+ #endif
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #define SANDBOX_EXPORT __attribute__((visibility("default")))
+ 
+diff --git a/services/device/fingerprint/fingerprint_export.h b/services/device/fingerprint/fingerprint_export.h
+index 0a451237ee4..1b13f714bdc 100644
+--- a/services/device/fingerprint/fingerprint_export.h
++++ b/services/device/fingerprint/fingerprint_export.h
+@@ -5,7 +5,7 @@
+ #ifndef SERVICES_DEVICE_FINGERPRINT_FINGERPRINT_EXPORT_H_
+ #define SERVICES_DEVICE_FINGERPRINT_FINGERPRINT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SERVICES_DEVICE_FINGERPRINT_IMPLEMENTATION)
+diff --git a/services/device/public/cpp/device_features_export.h b/services/device/public/cpp/device_features_export.h
+index b13a9ce52b6..8f10a2f1350 100644
+--- a/services/device/public/cpp/device_features_export.h
++++ b/services/device/public/cpp/device_features_export.h
+@@ -5,7 +5,7 @@
+ #ifndef SERVICES_DEVICE_PUBLIC_CPP_DEVICE_FEATURES_EXPORT_H_
+ #define SERVICES_DEVICE_PUBLIC_CPP_DEVICE_FEATURES_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/services/metrics/public/cpp/metrics_export.h b/services/metrics/public/cpp/metrics_export.h
+index 5c61fcdaaf4..39487067817 100644
+--- a/services/metrics/public/cpp/metrics_export.h
++++ b/services/metrics/public/cpp/metrics_export.h
+@@ -5,7 +5,7 @@
+ #ifndef SERVICES_METRICS_PUBLIC_CPP_METRICS_EXPORT_H_
+ #define SERVICES_METRICS_PUBLIC_CPP_METRICS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(METRICS_IMPLEMENTATION)
+diff --git a/services/service_manager/public/cpp/export.h b/services/service_manager/public/cpp/export.h
+index 5a3f5c30712..7d3e2434cf0 100644
+--- a/services/service_manager/public/cpp/export.h
++++ b/services/service_manager/public/cpp/export.h
+@@ -5,7 +5,7 @@
+ #ifndef SERVICES_SERVICE_MANAGER_PUBLIC_CPP_EXPORT_H_
+ #define SERVICES_SERVICE_MANAGER_PUBLIC_CPP_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SERVICE_MANAGER_PUBLIC_CPP_IMPL)
+diff --git a/services/service_manager/public/cpp/types_export.h b/services/service_manager/public/cpp/types_export.h
+index 45d5970c435..c7741abfa8b 100644
+--- a/services/service_manager/public/cpp/types_export.h
++++ b/services/service_manager/public/cpp/types_export.h
+@@ -5,7 +5,7 @@
+ #ifndef SERVICES_SERVICE_MANAGER_PUBLIC_CPP_TYPES_EXPORT_H_
+ #define SERVICES_SERVICE_MANAGER_PUBLIC_CPP_TYPES_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SERVICE_MANAGER_PUBLIC_CPP_TYPES_IMPL)
+diff --git a/skia/BUILD.gn b/skia/BUILD.gn
+index 1b586df72fa..b489bbd73df 100644
+--- a/skia/BUILD.gn
++++ b/skia/BUILD.gn
+@@ -107,7 +107,7 @@ config("skia_config") {
+     include_dirs += [ "//third_party/wuffs/src/release/c" ]
+   }
+ 
+-  if (is_component_build) {
++  if (is_component_build || chromium_sdk_exports) {
+     defines += [ "SKIA_DLL" ]
+   }
+ 
+@@ -1129,7 +1129,7 @@ skia_source_set("skia_opts") {
+ 
+ # Public config for skcms.
+ config("skcms_public_config") {
+-  if (is_component_build) {
++  if (is_component_build || chromium_sdk_exports) {
+     defines = [ "SKCMS_DLL=1" ]
+   }
+ }
+diff --git a/skia/ext/switches_export.h b/skia/ext/switches_export.h
+index 720a1f60b72..9eeed37007e 100644
+--- a/skia/ext/switches_export.h
++++ b/skia/ext/switches_export.h
+@@ -5,7 +5,7 @@
+ #ifndef SKIA_EXT_SWITCHES_EXPORT_H_
+ #define SKIA_EXT_SWITCHES_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SKIA_SWITCHES_IMPLEMENTATION)
+diff --git a/third_party/abseil-cpp/absl.gni b/third_party/abseil-cpp/absl.gni
+index 5ec01f6d23c..f6b86389588 100644
+--- a/third_party/abseil-cpp/absl.gni
++++ b/third_party/abseil-cpp/absl.gni
+@@ -40,7 +40,7 @@ template("absl_source_set") {
+       if (!defined(defines)) {
+         defines = []
+       }
+-      if (is_component_build) {
++      if (is_component_build || chromium_sdk_exports) {
+         defines += [ "ABSL_BUILD_DLL" ]
+         if (!is_win && current_os != "aix") {
+           configs -= [ "//build/config/gcc:symbol_visibility_hidden" ]
+diff --git a/third_party/blink/public/common/common_export.h b/third_party/blink/public/common/common_export.h
+index dd0f53ea84e..c4d0890b310 100644
+--- a/third_party/blink/public/common/common_export.h
++++ b/third_party/blink/public/common/common_export.h
+@@ -8,7 +8,7 @@
+ // This file is NOT to be included directly by code outside blink. It
+ // is an implementation detail of component builds.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(BLINK_COMMON_IMPLEMENTATION)
+diff --git a/third_party/blink/public/platform/web_common.h b/third_party/blink/public/platform/web_common.h
+index 4ee80f72890..3d6df968c86 100644
+--- a/third_party/blink/public/platform/web_common.h
++++ b/third_party/blink/public/platform/web_common.h
+@@ -43,7 +43,7 @@
+ #define BLINK_MODULES_IMPLEMENTATION 0
+ #endif
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if BLINK_IMPLEMENTATION
+diff --git a/third_party/blink/renderer/controller/controller_export.h b/third_party/blink/renderer/controller/controller_export.h
+index 7e263968686..305ee52c4c5 100644
+--- a/third_party/blink/renderer/controller/controller_export.h
++++ b/third_party/blink/renderer/controller/controller_export.h
+@@ -10,7 +10,7 @@ namespace blink {
+ // This macro is intended to export symbols in Source/controller/ which are
+ // still private to Blink (for instance, because they are used in unit tests).
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ #if BLINK_CONTROLLER_IMPLEMENTATION
+ #define CONTROLLER_EXPORT __declspec(dllexport)
+diff --git a/third_party/blink/renderer/core/core_export.h b/third_party/blink/renderer/core/core_export.h
+index 252788aa0b7..d0240b817c4 100644
+--- a/third_party/blink/renderer/core/core_export.h
++++ b/third_party/blink/renderer/core/core_export.h
+@@ -20,7 +20,7 @@
+ //
+ // CORE_EXPORT
+ //
+-#if !defined(COMPONENT_BUILD)
++#if !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define CORE_EXPORT  // No need of export
+ #else
+ 
+diff --git a/third_party/blink/renderer/extensions/webview/extensions_webview_export.h b/third_party/blink/renderer/extensions/webview/extensions_webview_export.h
+index f8ea0c5ce72..a7777ec2417 100644
+--- a/third_party/blink/renderer/extensions/webview/extensions_webview_export.h
++++ b/third_party/blink/renderer/extensions/webview/extensions_webview_export.h
+@@ -20,7 +20,7 @@
+ //
+ // EXTENSIONS_WEBVIEW_EXPORT
+ //
+-#if !defined(COMPONENT_BUILD)
++#if !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define EXTENSIONS_WEBVIEW_EXPORT  // No need of export
+ #else
+ 
+diff --git a/third_party/blink/renderer/modules/modules_export.h b/third_party/blink/renderer/modules/modules_export.h
+index 233e60befef..c221bc7e893 100644
+--- a/third_party/blink/renderer/modules/modules_export.h
++++ b/third_party/blink/renderer/modules/modules_export.h
+@@ -20,7 +20,7 @@
+ //
+ // MODULES_EXPORT
+ //
+-#if !defined(COMPONENT_BUILD)
++#if !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define MODULES_EXPORT  // No need of export
+ #else
+ 
+diff --git a/third_party/blink/renderer/platform/platform_export.h b/third_party/blink/renderer/platform/platform_export.h
+index 16a713e5de3..85eee64c0b8 100644
+--- a/third_party/blink/renderer/platform/platform_export.h
++++ b/third_party/blink/renderer/platform/platform_export.h
+@@ -48,7 +48,7 @@
+ //
+ // PLATFORM_EXPORT
+ //
+-#if !defined(COMPONENT_BUILD)
++#if !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define PLATFORM_EXPORT  // No need of export
+ #else
+ 
+diff --git a/third_party/blink/renderer/platform/wtf/wtf_export.h b/third_party/blink/renderer/platform/wtf/wtf_export.h
+index da6d1245a4a..d138574d7cf 100644
+--- a/third_party/blink/renderer/platform/wtf/wtf_export.h
++++ b/third_party/blink/renderer/platform/wtf/wtf_export.h
+@@ -35,7 +35,7 @@
+ #define WTF_IMPLEMENTATION 0
+ #endif
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ #if WTF_IMPLEMENTATION
+ #define WTF_EXPORT __declspec(dllexport)
+diff --git a/third_party/boringssl/BUILD.gn b/third_party/boringssl/BUILD.gn
+index f4e51bfcfc4..0258983945c 100644
+--- a/third_party/boringssl/BUILD.gn
++++ b/third_party/boringssl/BUILD.gn
+@@ -17,7 +17,7 @@ if (enable_rust) {
+ # Config for us and everybody else depending on BoringSSL.
+ config("external_config") {
+   include_dirs = [ "src/include" ]
+-  if (is_component_build) {
++  if (is_component_build || chromium_sdk_exports) {
+     defines = [ "BORINGSSL_SHARED_LIBRARY" ]
+   }
+ }
+diff --git a/third_party/inspector_protocol/crdtp/export.h b/third_party/inspector_protocol/crdtp/export.h
+index 92fa1427c3b..5a9496fe528 100644
+--- a/third_party/inspector_protocol/crdtp/export.h
++++ b/third_party/inspector_protocol/crdtp/export.h
+@@ -5,7 +5,7 @@
+ #ifndef CRDTP_EXPORT_H_
+ #define CRDTP_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CRDTP_IMPLEMENTATION)
+diff --git a/third_party/libprotobuf-mutator/fuzzable_proto_export.h b/third_party/libprotobuf-mutator/fuzzable_proto_export.h
+index e3b48265ed2..04db59ed158 100644
+--- a/third_party/libprotobuf-mutator/fuzzable_proto_export.h
++++ b/third_party/libprotobuf-mutator/fuzzable_proto_export.h
+@@ -12,7 +12,7 @@
+                                FUZZABLE_PROTO_EXPORT_ANNOTATION, \
+                                FUZZABLE_PROTO_IMPORT_ANNOTATION)
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ #define FUZZABLE_PROTO_EXPORT_ANNOTATION __declspec(dllexport)
+ #define FUZZABLE_PROTO_IMPORT_ANNOTATION __declspec(dllimport)
+diff --git a/third_party/protobuf/src/google/protobuf/stubs/port.h b/third_party/protobuf/src/google/protobuf/stubs/port.h
+index c94615c0499..15d59791771 100644
+--- a/third_party/protobuf/src/google/protobuf/stubs/port.h
++++ b/third_party/protobuf/src/google/protobuf/stubs/port.h
+@@ -33,7 +33,7 @@
+ 
+ // Legacy: some users reference these (internal-only) macros even though we
+ // don't need them any more.
+-#if defined(COMPONENT_BUILD) && defined(PROTOBUF_USE_DLLS)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(PROTOBUF_USE_DLLS)
+   #if defined(_MSC_VER)
+     #ifdef LIBPROTOBUF_EXPORTS
+       #define LIBPROTOBUF_EXPORT __declspec(dllexport)
+diff --git a/third_party/zlib/chromeconf.h b/third_party/zlib/chromeconf.h
+index 77f0e29e0d6..16ef5ba9817 100644
+--- a/third_party/zlib/chromeconf.h
++++ b/third_party/zlib/chromeconf.h
+@@ -5,7 +5,7 @@
+ #ifndef THIRD_PARTY_ZLIB_CHROMECONF_H_
+ #define THIRD_PARTY_ZLIB_CHROMECONF_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ #if defined(ZLIB_IMPLEMENTATION)
+ #define ZEXTERN __declspec(dllexport)
+diff --git a/ui/accelerated_widget_mac/accelerated_widget_mac_export.h b/ui/accelerated_widget_mac/accelerated_widget_mac_export.h
+index 18991797d06..8be6db4ac16 100644
+--- a/ui/accelerated_widget_mac/accelerated_widget_mac_export.h
++++ b/ui/accelerated_widget_mac/accelerated_widget_mac_export.h
+@@ -9,7 +9,7 @@
+ #error Not for use on Windows.
+ #endif
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #define ACCELERATED_WIDGET_MAC_EXPORT __attribute__((visibility("default")))
+ 
+diff --git a/ui/accessibility/ax_base_export.h b/ui/accessibility/ax_base_export.h
+index 2a44095cc95..60b0da1aedc 100644
+--- a/ui/accessibility/ax_base_export.h
++++ b/ui/accessibility/ax_base_export.h
+@@ -8,12 +8,12 @@
+ // Defines AX_BASE_EXPORT so that functionality implemented by the
+ // ui/accessibility:ax_base module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD) && defined(WIN32) && \
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32) && \
+     defined(AX_BASE_IMPLEMENTATION)
+ #define AX_BASE_EXPORT __declspec(dllexport)
+-#elif defined(COMPONENT_BUILD) && defined(WIN32)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)
+ #define AX_BASE_EXPORT __declspec(dllimport)
+-#elif defined(COMPONENT_BUILD)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define AX_BASE_EXPORT __attribute__((visibility("default")))
+ #else
+ #define AX_BASE_EXPORT
+diff --git a/ui/accessibility/ax_export.h b/ui/accessibility/ax_export.h
+index bf998e8d6b1..bbcda92cbb5 100644
+--- a/ui/accessibility/ax_export.h
++++ b/ui/accessibility/ax_export.h
+@@ -8,11 +8,11 @@
+ // Defines AX_EXPORT so that functionality implemented by the
+ // ui/accessibility module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD) && defined(WIN32) && defined(AX_IMPLEMENTATION)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32) && defined(AX_IMPLEMENTATION)
+ #define AX_EXPORT __declspec(dllexport)
+-#elif defined(COMPONENT_BUILD) && defined(WIN32)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)
+ #define AX_EXPORT __declspec(dllimport)
+-#elif defined(COMPONENT_BUILD)
++#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define AX_EXPORT __attribute__((visibility("default")))
+ #else
+ #define AX_EXPORT
+diff --git a/ui/android/ui_android_export.h b/ui/android/ui_android_export.h
+index b5a3c5b9bbb..b83b3c8b66d 100644
+--- a/ui/android/ui_android_export.h
++++ b/ui/android/ui_android_export.h
+@@ -8,7 +8,7 @@
+ // Defines UI_ANDROID_EXPORT so that functionality implemented by the UI module
+ // can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ #error Unsupported target architecture.
+diff --git a/ui/aura/aura_export.h b/ui/aura/aura_export.h
+index 90ebdf820d9..af80a3b34ae 100644
+--- a/ui/aura/aura_export.h
++++ b/ui/aura/aura_export.h
+@@ -8,7 +8,7 @@
+ // Defines AURA_EXPORT so that functionality implemented by the aura module
+ // can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(AURA_IMPLEMENTATION)
+diff --git a/ui/aura_extra/aura_extra_export.h b/ui/aura_extra/aura_extra_export.h
+index 1773417fef7..19d163965bc 100644
+--- a/ui/aura_extra/aura_extra_export.h
++++ b/ui/aura_extra/aura_extra_export.h
+@@ -8,7 +8,7 @@
+ // Defines AURA_EXTRA_EXPORT so that functionality implemented by the aura-extra
+ // module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(AURA_EXTRA_IMPLEMENTATION)
+diff --git a/ui/chromeos/ui_chromeos_export.h b/ui/chromeos/ui_chromeos_export.h
+index 4c140186970..d16b304f139 100644
+--- a/ui/chromeos/ui_chromeos_export.h
++++ b/ui/chromeos/ui_chromeos_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_CHROMEOS_UI_CHROMEOS_EXPORT_H_
+ #define UI_CHROMEOS_UI_CHROMEOS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #define UI_CHROMEOS_EXPORT __attribute__((visibility("default")))
+ 
+ #else  // defined(COMPONENT_BUILD)
+diff --git a/ui/compositor/compositor_export.h b/ui/compositor/compositor_export.h
+index 1838327547b..2366671318f 100644
+--- a/ui/compositor/compositor_export.h
++++ b/ui/compositor/compositor_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_COMPOSITOR_COMPOSITOR_EXPORT_H_
+ #define UI_COMPOSITOR_COMPOSITOR_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(COMPOSITOR_IMPLEMENTATION)
+diff --git a/ui/display/display_export.h b/ui/display/display_export.h
+index c3087e47cd9..d03730d6040 100644
+--- a/ui/display/display_export.h
++++ b/ui/display/display_export.h
+@@ -8,7 +8,7 @@
+ // Defines DISPLAY_EXPORT so that functionality implemented by the UI module
+ // can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/ui/display/manager/display_manager_export.h b/ui/display/manager/display_manager_export.h
+index 09af89e73bd..61bbd3405aa 100644
+--- a/ui/display/manager/display_manager_export.h
++++ b/ui/display/manager/display_manager_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_DISPLAY_MANAGER_DISPLAY_MANAGER_EXPORT_H_
+ #define UI_DISPLAY_MANAGER_DISPLAY_MANAGER_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(DISPLAY_MANAGER_IMPLEMENTATION)
+diff --git a/ui/display/types/display_types_export.h b/ui/display/types/display_types_export.h
+index 9680a246ca8..00142d8eec9 100644
+--- a/ui/display/types/display_types_export.h
++++ b/ui/display/types/display_types_export.h
+@@ -8,7 +8,7 @@
+ // Defines DISPLAY_TYPES_EXPORT so that functionality implemented by the
+ // DISPLAY_TYPES module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/ui/display/util/display_util_export.h b/ui/display/util/display_util_export.h
+index 51f58f4046a..57e1f119b9e 100644
+--- a/ui/display/util/display_util_export.h
++++ b/ui/display/util/display_util_export.h
+@@ -8,7 +8,7 @@
+ // Defines DISPLAY_UTIL_EXPORT so that functionality implemented by the
+ // display_util module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/ui/events/devices/events_devices_export.h b/ui/events/devices/events_devices_export.h
+index f4990ce08b1..1fef85467dd 100644
+--- a/ui/events/devices/events_devices_export.h
++++ b/ui/events/devices/events_devices_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_EVENTS_DEVICES_EVENTS_DEVICES_EXPORT_H_
+ #define UI_EVENTS_DEVICES_EVENTS_DEVICES_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(EVENTS_DEVICES_IMPLEMENTATION)
+diff --git a/ui/events/devices/x11/events_devices_x11_export.h b/ui/events/devices/x11/events_devices_x11_export.h
+index 0ccae8a731c..f90e26c1511 100644
+--- a/ui/events/devices/x11/events_devices_x11_export.h
++++ b/ui/events/devices/x11/events_devices_x11_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_EVENTS_DEVICES_X11_EVENTS_DEVICES_X11_EXPORT_H_
+ #define UI_EVENTS_DEVICES_X11_EVENTS_DEVICES_X11_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(EVENTS_DEVICES_X11_IMPLEMENTATION)
+diff --git a/ui/events/events_base_export.h b/ui/events/events_base_export.h
+index 830af7971a3..3751e6e27dd 100644
+--- a/ui/events/events_base_export.h
++++ b/ui/events/events_base_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_EVENTS_EVENTS_BASE_EXPORT_H_
+ #define UI_EVENTS_EVENTS_BASE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(EVENTS_BASE_IMPLEMENTATION)
+diff --git a/ui/events/events_export.h b/ui/events/events_export.h
+index c79179652b7..b8018897404 100644
+--- a/ui/events/events_export.h
++++ b/ui/events/events_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_EVENTS_EVENTS_EXPORT_H_
+ #define UI_EVENTS_EVENTS_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(EVENTS_IMPLEMENTATION)
+diff --git a/ui/events/gesture_detection/gesture_detection_export.h b/ui/events/gesture_detection/gesture_detection_export.h
+index 5e80720feb2..3918957ac1e 100644
+--- a/ui/events/gesture_detection/gesture_detection_export.h
++++ b/ui/events/gesture_detection/gesture_detection_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_EVENTS_GESTURE_DETECTION_GESTURE_DETECTION_EXPORT_H_
+ #define UI_EVENTS_GESTURE_DETECTION_GESTURE_DETECTION_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GESTURE_DETECTION_IMPLEMENTATION)
+diff --git a/ui/events/keycodes/keycodes_x_export.h b/ui/events/keycodes/keycodes_x_export.h
+index 567015ed07e..9f54af320c9 100644
+--- a/ui/events/keycodes/keycodes_x_export.h
++++ b/ui/events/keycodes/keycodes_x_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_EVENTS_KEYCODES_KEYCODES_X_EXPORT_H_
+ #define UI_EVENTS_KEYCODES_KEYCODES_X_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(KEYCODES_X_IMPLEMENTATION)
+diff --git a/ui/events/x/events_x_export.h b/ui/events/x/events_x_export.h
+index fb900ad9cff..806655a91eb 100644
+--- a/ui/events/x/events_x_export.h
++++ b/ui/events/x/events_x_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_EVENTS_X_EVENTS_X_EXPORT_H_
+ #define UI_EVENTS_X_EVENTS_X_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(EVENTS_X_IMPLEMENTATION)
+diff --git a/ui/file_manager/file_manager_export.h b/ui/file_manager/file_manager_export.h
+index f46a1b5f3b0..40a5de059f8 100644
+--- a/ui/file_manager/file_manager_export.h
++++ b/ui/file_manager/file_manager_export.h
+@@ -8,7 +8,7 @@
+ // Defines FILE_MANAGER_EXPORT so that functionality implemented by the
+ // FILE_MANAGER module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(FILE_MANAGER_IMPLEMENTATION)
+diff --git a/ui/gfx/animation/animation_export.h b/ui/gfx/animation/animation_export.h
+index 0a533369c68..c28ae60bd47 100644
+--- a/ui/gfx/animation/animation_export.h
++++ b/ui/gfx/animation/animation_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_ANIMATION_ANIMATION_EXPORT_H_
+ #define UI_GFX_ANIMATION_ANIMATION_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(ANIMATION_IMPLEMENTATION)
+diff --git a/ui/gfx/animation/keyframe/keyframe_animation_export.h b/ui/gfx/animation/keyframe/keyframe_animation_export.h
+index 571b9f27df9..b21188b7e6a 100644
+--- a/ui/gfx/animation/keyframe/keyframe_animation_export.h
++++ b/ui/gfx/animation/keyframe/keyframe_animation_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_ANIMATION_KEYFRAME_KEYFRAME_ANIMATION_EXPORT_H_
+ #define UI_GFX_ANIMATION_KEYFRAME_KEYFRAME_ANIMATION_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GFX_KEYFRAME_ANIMATION_IMPLEMENTATION)
+diff --git a/ui/gfx/codec/codec_export.h b/ui/gfx/codec/codec_export.h
+index 083dfb6058c..c857c1195be 100644
+--- a/ui/gfx/codec/codec_export.h
++++ b/ui/gfx/codec/codec_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_CODEC_CODEC_EXPORT_H_
+ #define UI_GFX_CODEC_CODEC_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(CODEC_IMPLEMENTATION)
+diff --git a/ui/gfx/color_space_export.h b/ui/gfx/color_space_export.h
+index b253d38309e..af156f363e0 100644
+--- a/ui/gfx/color_space_export.h
++++ b/ui/gfx/color_space_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_COLOR_SPACE_EXPORT_H_
+ #define UI_GFX_COLOR_SPACE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(COLOR_SPACE_IMPLEMENTATION)
+diff --git a/ui/gfx/gfx_skia_export.h b/ui/gfx/gfx_skia_export.h
+index 6e9e8278cbc..e850a2a34e2 100644
+--- a/ui/gfx/gfx_skia_export.h
++++ b/ui/gfx/gfx_skia_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_GFX_SKIA_EXPORT_H_
+ #define UI_GFX_GFX_SKIA_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GFX_SKIA_IMPLEMENTATION)
+diff --git a/ui/gfx/ipc/geometry/gfx_ipc_geometry_export.h b/ui/gfx/ipc/geometry/gfx_ipc_geometry_export.h
+index 49d69087bb5..05a1874707b 100644
+--- a/ui/gfx/ipc/geometry/gfx_ipc_geometry_export.h
++++ b/ui/gfx/ipc/geometry/gfx_ipc_geometry_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_IPC_GEOMETRY_GFX_IPC_GEOMETRY_EXPORT_H_
+ #define UI_GFX_IPC_GEOMETRY_GFX_IPC_GEOMETRY_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GFX_IPC_GEOMETRY_IMPLEMENTATION)
+diff --git a/ui/gfx/ipc/gfx_ipc_export.h b/ui/gfx/ipc/gfx_ipc_export.h
+index c8aa3947e8b..355e317e36f 100644
+--- a/ui/gfx/ipc/gfx_ipc_export.h
++++ b/ui/gfx/ipc/gfx_ipc_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_IPC_GFX_IPC_EXPORT_H_
+ #define UI_GFX_IPC_GFX_IPC_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GFX_IPC_IMPLEMENTATION)
+diff --git a/ui/gfx/range/gfx_range_export.h b/ui/gfx/range/gfx_range_export.h
+index fcf717fd600..8d64ffcb300 100644
+--- a/ui/gfx/range/gfx_range_export.h
++++ b/ui/gfx/range/gfx_range_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_RANGE_GFX_RANGE_EXPORT_H_
+ #define UI_GFX_RANGE_GFX_RANGE_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GFX_RANGE_IMPLEMENTATION)
+diff --git a/ui/gfx/switches_export.h b/ui/gfx/switches_export.h
+index da608aadabf..bde5e1dbc58 100644
+--- a/ui/gfx/switches_export.h
++++ b/ui/gfx/switches_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GFX_SWITCHES_EXPORT_H_
+ #define UI_GFX_SWITCHES_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GFX_SWITCHES_IMPLEMENTATION)
+diff --git a/ui/gl/gl_export.h b/ui/gl/gl_export.h
+index 9d1f1c8c4ce..0180d92849a 100644
+--- a/ui/gl/gl_export.h
++++ b/ui/gl/gl_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GL_GL_EXPORT_H_
+ #define UI_GL_GL_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GL_IMPLEMENTATION)
+diff --git a/ui/gl/init/gl_init_export.h b/ui/gl/init/gl_init_export.h
+index e14db38aed7..0311e9e8180 100644
+--- a/ui/gl/init/gl_init_export.h
++++ b/ui/gl/init/gl_init_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_GL_INIT_GL_INIT_EXPORT_H_
+ #define UI_GL_INIT_GL_INIT_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(GL_INIT_IMPLEMENTATION)
+diff --git a/ui/message_center/message_center_export.h b/ui/message_center/message_center_export.h
+index a4aa3ebbb6b..b73a16d9e05 100644
+--- a/ui/message_center/message_center_export.h
++++ b/ui/message_center/message_center_export.h
+@@ -8,7 +8,7 @@
+ // Defines MESSAGE_CENTER_EXPORT so that functionality implemented by the
+ // message_center module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(MESSAGE_CENTER_IMPLEMENTATION)
+diff --git a/ui/message_center/public/cpp/message_center_public_export.h b/ui/message_center/public/cpp/message_center_public_export.h
+index 2dff2ac6425..17ed4b9163f 100644
+--- a/ui/message_center/public/cpp/message_center_public_export.h
++++ b/ui/message_center/public/cpp/message_center_public_export.h
+@@ -8,7 +8,7 @@
+ // Defines MESSAGE_CENTER_PUBLIC_EXPORT so that functionality implemented by the
+ // message_center module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(MESSAGE_CENTER_PUBLIC_IMPLEMENTATION)
+diff --git a/ui/platform_window/stub/stub_window_export.h b/ui/platform_window/stub/stub_window_export.h
+index 33bf2b98a01..45cc2a16fdf 100644
+--- a/ui/platform_window/stub/stub_window_export.h
++++ b/ui/platform_window/stub/stub_window_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_PLATFORM_WINDOW_STUB_STUB_WINDOW_EXPORT_H_
+ #define UI_PLATFORM_WINDOW_STUB_STUB_WINDOW_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(STUB_WINDOW_IMPLEMENTATION)
+diff --git a/ui/platform_window/win/win_window_export.h b/ui/platform_window/win/win_window_export.h
+index 9b5b28ad0d9..764e5561234 100644
+--- a/ui/platform_window/win/win_window_export.h
++++ b/ui/platform_window/win/win_window_export.h
+@@ -5,7 +5,7 @@
+ #ifndef UI_PLATFORM_WINDOW_WIN_WIN_WINDOW_EXPORT_H_
+ #define UI_PLATFORM_WINDOW_WIN_WIN_WINDOW_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WIN_WINDOW_IMPLEMENTATION)
+diff --git a/ui/shell_dialogs/shell_dialogs_export.h b/ui/shell_dialogs/shell_dialogs_export.h
+index 03a5e9dbf17..a10e7ac530c 100644
+--- a/ui/shell_dialogs/shell_dialogs_export.h
++++ b/ui/shell_dialogs/shell_dialogs_export.h
+@@ -8,7 +8,7 @@
+ // Defines SHELL_DIALOGS_EXPORT so that functionality implemented by the Shell
+ // Dialogs module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SHELL_DIALOGS_IMPLEMENTATION)
+diff --git a/ui/snapshot/snapshot_export.h b/ui/snapshot/snapshot_export.h
+index d3ad90ace01..ee7b09da6fc 100644
+--- a/ui/snapshot/snapshot_export.h
++++ b/ui/snapshot/snapshot_export.h
+@@ -8,7 +8,7 @@
+ // Defines SNAPSHOT_EXPORT so that functionality implemented by the snapshot
+ // module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(SNAPSHOT_IMPLEMENTATION)
+diff --git a/ui/touch_selection/ui_touch_selection_export.h b/ui/touch_selection/ui_touch_selection_export.h
+index b80d887d590..e40c5e7f150 100644
+--- a/ui/touch_selection/ui_touch_selection_export.h
++++ b/ui/touch_selection/ui_touch_selection_export.h
+@@ -10,7 +10,7 @@
+ 
+ #include "build/build_config.h"
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ 
+ #if defined(WIN32)
+ 
+diff --git a/ui/views/controls/webview/webview_export.h b/ui/views/controls/webview/webview_export.h
+index 919ec106fab..d4af4bee3a8 100644
+--- a/ui/views/controls/webview/webview_export.h
++++ b/ui/views/controls/webview/webview_export.h
+@@ -8,7 +8,7 @@
+ // Defines WEBVIEW_EXPORT so that functionality implemented by the webview
+ // module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WEBVIEW_IMPLEMENTATION)
+diff --git a/ui/views/examples/views_examples_export.h b/ui/views/examples/views_examples_export.h
+index 8471cb9f854..e11eb526e8c 100644
+--- a/ui/views/examples/views_examples_export.h
++++ b/ui/views/examples/views_examples_export.h
+@@ -8,7 +8,7 @@
+ // Defines VIEWS_EXAMPLES_EXPORT so that functionality implemented by the
+ // views_examples_with_content_lib module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIEWS_EXAMPLES_IMPLEMENTATION)
+diff --git a/ui/views/examples/views_examples_with_content_export.h b/ui/views/examples/views_examples_with_content_export.h
+index 8a795e4dcf7..2ba8c0e8a34 100644
+--- a/ui/views/examples/views_examples_with_content_export.h
++++ b/ui/views/examples/views_examples_with_content_export.h
+@@ -8,7 +8,7 @@
+ // Defines VIEWS_EXAMPLES_WITH_CONTENT_EXPORT so that functionality implemented
+ // by the views_examples_with_content_lib module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIEWS_EXAMPLES_WITH_CONTENT_IMPLEMENTATION)
+diff --git a/ui/views/views_export.h b/ui/views/views_export.h
+index 2bc88a45f86..e31c9a25b68 100644
+--- a/ui/views/views_export.h
++++ b/ui/views/views_export.h
+@@ -8,7 +8,7 @@
+ // Defines VIEWS_EXPORT so that functionality implemented by the Views module
+ // can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIEWS_IMPLEMENTATION)
+diff --git a/ui/views_content_client/views_content_client_export.h b/ui/views_content_client/views_content_client_export.h
+index 43ac07727e4..82c83b4966a 100644
+--- a/ui/views_content_client/views_content_client_export.h
++++ b/ui/views_content_client/views_content_client_export.h
+@@ -8,7 +8,7 @@
+ // Defines VIEWS_CONTENT_CLIENT_EXPORT so that functionality implemented by the
+ // views_content_client module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(VIEWS_CONTENT_CLIENT_IMPLEMENTATION)
+diff --git a/ui/web_dialogs/web_dialogs_export.h b/ui/web_dialogs/web_dialogs_export.h
+index 7f616cf6875..d0f46010d20 100644
+--- a/ui/web_dialogs/web_dialogs_export.h
++++ b/ui/web_dialogs/web_dialogs_export.h
+@@ -8,7 +8,7 @@
+ // Defines WEB_DIALOGS_EXPORT so that functionality implemented by the
+ // web_dialogs module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WEB_DIALOGS_IMPLEMENTATION)
+diff --git a/ui/wm/public/wm_public_export.h b/ui/wm/public/wm_public_export.h
+index 582ee094524..1e2063dcca4 100644
+--- a/ui/wm/public/wm_public_export.h
++++ b/ui/wm/public/wm_public_export.h
+@@ -8,7 +8,7 @@
+ // Defines WM_PUBLIC_EXPORT so that functionality implemented by the wm_public
+ // module can be exported to consumers.
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(WM_PUBLIC_IMPLEMENTATION)
+diff --git a/url/ipc/url_ipc_export.h b/url/ipc/url_ipc_export.h
+index 3780fc9f398..55da5385458 100644
+--- a/url/ipc/url_ipc_export.h
++++ b/url/ipc/url_ipc_export.h
+@@ -5,7 +5,7 @@
+ #ifndef URL_IPC_URL_IPC_EXPORT_H_
+ #define URL_IPC_URL_IPC_EXPORT_H_
+ 
+-#if defined(COMPONENT_BUILD)
++#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(WIN32)
+ 
+ #if defined(URL_IPC_IMPLEMENTATION)

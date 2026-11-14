@@ -1,0 +1,35 @@
+# The SDK's settings, the same for every target (specs/0002-build.md, Settings). sdk.py configure adds the target's
+# system and processor. One configuration: Chromium's release build, which embedders' development and release
+# builds both link.
+is_debug = false
+is_official_build = true
+is_component_build = false
+dcheck_always_on = false
+symbol_level = 1
+blink_symbol_level = 0
+v8_symbol_level = 0
+use_remoteexec = false
+
+# Redistribution: no proprietary codecs, and FFmpeg as its own shared library, which a user may replace with one
+# built from its published source (specs/0004-licences.md).
+proprietary_codecs = false
+ffmpeg_branding = "Chromium"
+is_component_ffmpeg = true
+
+# One shared library that exports what a component build exports (chromium/patches, specs/0001-sdk.md).
+chromium_sdk_exports = true
+v8_expose_public_symbols = true
+
+# Thread-locals a shared library can hold, as in a component build: the executable-only local-exec model can't
+# link into one. V8's follow chromium_sdk_exports.
+blink_heap_inside_shared_library = true
+
+# Chromium's libc++ as a shared library of its own, so the library and its embedder share one std::__Cr.
+libcxx_is_shared = true
+
+# Control-flow integrity checks calls against the classes and functions the link sees, and an embedder implements
+# Content's interfaces outside it, so every call into the embedder would fail them.
+is_cfi = false
+use_cfi_icall = false
+
+root_extra_deps = [ "//chromium_sdk" ]

@@ -1,0 +1,29 @@
+{
+  "linux-amd64": {
+    "target_os": "linux",
+    "target_cpu": "x64",
+    "clang_target": "x86_64-unknown-linux-gnu",
+    "sysroot": "build/linux/debian_bullseye_amd64-sysroot",
+    "test_runner": "lanescape-16vcpu-linux-amd64"
+  },
+  "linux-arm64": {
+    "target_os": "linux",
+    "target_cpu": "arm64",
+    "clang_target": "aarch64-unknown-linux-gnu",
+    "sysroot": "build/linux/debian_bullseye_arm64-sysroot",
+    "test_runner": "lanescape-16vcpu-linux-arm64"
+  },
+  "macos-arm64": {
+    "target_os": "mac",
+    "target_cpu": "arm64",
+    "clang_target": "arm64-apple-macos",
+    "mac_sdk": {
+      "bucket": "lanescape-browser-ci",
+      "object": "sources/mac-sdk/d0e54770d60e077c/MacOSX26.2.sdk.tar.zst",
+      "sha256": "d0e54770d60e077c5c55ad66cbbed99a4b06dd9c4ecfc4a66e695dd00c2eab9f",
+      "xcode": "26.3 (17C529)",
+      "sdk": "26.2 (25C58)"
+    },
+    "test_runner": "blacksmith-12vcpu-macos-26"
+  }
+}
