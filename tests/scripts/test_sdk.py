@@ -107,6 +107,26 @@ class Patch(unittest.TestCase):
         # An unchanged file keeps its time, so nothing that includes it rebuilds.
         self.assertEqual((self.src/'v8/c.h').stat().st_mtime_ns, v8_time)
 
+    def test_stopped_mid_apply_then_the_patch_drops_a_file(self):
+        # A patch of a.h and b.h, recorded, then a machine stopped after changing a.h only.
+        self.write_patches('A\n')
+        patch = self.repo/'chromium/patches/src.patch'
+        (self.src/'b.h').write_text('B\n')
+        two = git(self.src, 'diff', '--', 'b.h')
+        (self.src/'b.h').write_text('b\n')
+        patch.write_text(patch.read_text()+two)
+        sdk.record('', patch)
+        (self.src/'a.h').write_text('A\n')
+        # The next push's patch changes b.h alone.
+        (self.src/'a.h').write_text('a\n')
+        (self.src/'b.h').write_text('BB\n')
+        patch.write_text(git(self.src, 'diff', '--', 'b.h'))
+        (self.src/'b.h').write_text('b\n')
+        (self.src/'a.h').write_text('A\n')
+        self.patch()
+        self.assertEqual((self.src/'a.h').read_text(), 'a\n')
+        self.assertEqual((self.src/'b.h').read_text(), 'BB\n')
+
     def test_a_dropped_patch_is_reverted(self):
         self.write_patches('A\n')
         self.patch()

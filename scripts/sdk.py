@@ -283,8 +283,9 @@ def step_patch(target, args):
             # No record and not applied: the pin's files, or a part applied by a machine that stopped.
             run('git', '-C', git_repo(src, repo), 'checkout', '--', *patched_files(want))
         if want:
-            run('git', '-C', git_repo(src, repo), 'apply', want)
+            # Recorded first, so a machine stopped mid-apply leaves a record of every file it may have changed.
             record(repo, want)
+            run('git', '-C', git_repo(src, repo), 'apply', want)
         for path, (content, mtime) in before.items():
             if path.is_file() and path.read_bytes() == content:
                 os.utime(path, ns=(mtime, mtime))

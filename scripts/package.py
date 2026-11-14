@@ -25,6 +25,8 @@ HEADER_ROOTS = (
     '//gpu', '//ipc', '//media', '//mojo/public', '//net', '//sandbox', '//skia', '//storage/browser',
     '//storage/common', '//third_party/blink/public', '//ui', '//url', '//v8/include',
 )
+# Shipped whole: Chromium's libc++, libc++abi and libc++'s configuration for Chromium.
+LIBCXX_TREES = ('third_party/libc++/src/include', 'third_party/libc++abi/src/include', 'buildtools/third_party/libc++')
 SERVICE_ROOT = re.compile(r'^//services/[^/:]+/public(/|:|$)')
 
 # Compile flags that are about Chromium's own build rather than what its headers need: diagnostics, warnings,
@@ -218,8 +220,9 @@ def compile_argv(variables, language):
 
 
 def gn_json(src, out, *args):
-    gn = shutil.which('gn') or str(Path(src).parent.parent/'depot_tools/gn')
-    return json.loads(subprocess.check_output([gn, 'desc', '--format=json', str(out), *args], cwd=src, text=True))
+    import sdk
+    return json.loads(subprocess.check_output([str(sdk.depot_tools()/'gn'), 'desc', '--format=json', str(out), *args],
+                                              cwd=src, text=True, env=sdk.env()))
 
 
 def root_headers(src, out):
@@ -360,6 +363,11 @@ def package(target, checkout, out, version, output):
         for relative in runtime_libraries:
             strip(toolchain_src, lib/relative, system)
 
+    # libc++'s whole tree, whatever Chromium's headers happen to include: an embedder may use any of it.
+    for tree in LIBCXX_TREES:
+        for path in (src/tree).rglob('*'):
+            if path.is_file():
+                headers[f'include/{path.relative_to(src).as_posix()}'] = path
     headers_dir = part('headers')
     for relative, source in headers.items():
         destination = headers_dir/relative
