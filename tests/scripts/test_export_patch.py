@@ -21,6 +21,12 @@ class RewriteHeader(unittest.TestCase):
         self.assertEqual(export_patch.rewrite_header('#elif defined(COMPONENT_BUILD) && defined(WIN32)\n'),
                          '#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)\n')
 
+    def test_partition_alloc(self):
+        self.assertEqual(export_patch.rewrite_header('#if PA_BUILDFLAG(IS_COMPONENT_BUILD)\n'),
+                         '#if (PA_BUILDFLAG(IS_COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))\n')
+        self.assertEqual(export_patch.rewrite_header('#endif  // PA_BUILDFLAG(IS_COMPONENT_BUILD)\n'),
+                         '#endif  // PA_BUILDFLAG(IS_COMPONENT_BUILD)\n')
+
     def test_ifdef(self):
         self.assertEqual(export_patch.rewrite_header('#ifdef COMPONENT_BUILD\n'),
                          '#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))\n')
@@ -75,7 +81,9 @@ class CarriedPatches(unittest.TestCase):
                             'defines += [ "ABSL_BUILD_DLL" ]', 'perfetto_component_build = true',
                             'if ((defined(is_component_build) && is_component_build) ||',
                             'public_deps += [ "//v8:run_mksnapshot_default" ]',
-                            'defines += [ "V8_TLS_USED_IN_LIBRARY" ]'):
+                            'defines += [ "V8_TLS_USED_IN_LIBRARY" ]',
+                            'if ((v8_monolithic && v8_monolithic_for_shared_library) ||',
+                            'ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]'):
                     continue
                 self.assertTrue('CHROMIUM_SDK_EXPORTS' in body or 'chromium_sdk_exports' in body,
                                 f'{patch.name}: {line}')

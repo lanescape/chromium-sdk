@@ -1,3 +1,16 @@
+diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/component_export.h b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/component_export.h
+index 21a7b007719..0e8fecc945d 100644
+--- a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/component_export.h
++++ b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/component_export.h
+@@ -35,7 +35,7 @@
+ // Compiler-specific macros to annotate for export or import of a symbol. No-op
+ // in non-component builds. These should not see much if any direct use.
+ // Instead use the PA_COMPONENT_EXPORT macro defined above.
+-#if PA_BUILDFLAG(IS_COMPONENT_BUILD)
++#if (PA_BUILDFLAG(IS_COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))
+ #if defined(_WIN32)
+ #define PA_COMPONENT_EXPORT_ANNOTATION __declspec(dllexport)
+ #define PA_COMPONENT_IMPORT_ANNOTATION __declspec(dllimport)
 diff --git a/base/base_export.h b/base/base_export.h
 index dd4c5912e5d..1caecad718a 100644
 --- a/base/base_export.h
@@ -120,6 +133,20 @@ index 7114fd817a7..e94c53f4a06 100644
      ldflags += [
        # Path for loading shared libraries for unbundled binaries.
        "-Wl,-rpath,@loader_path/.",
+diff --git a/buildtools/third_party/libc++/BUILD.gn b/buildtools/third_party/libc++/BUILD.gn
+index e459bcb42f4..c0e2b0d149d 100644
+--- a/buildtools/third_party/libc++/BUILD.gn
++++ b/buildtools/third_party/libc++/BUILD.gn
+@@ -568,6 +568,9 @@ target(libcxx_target_type, "libc++") {
+   if ((is_android || is_apple) && libcxx_is_shared) {
+     # Use libc++_chrome to avoid conflicting with system libc++
+     output_name = "libc++_chrome"
++    if (is_apple && chromium_sdk_exports) {
++      ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]
++    }
+     if (is_android) {
+       # See crbug.com/1076244#c11 for more detail.
+       configs -= [ "//build/config/android:hide_all_but_jni_onload" ]
 diff --git a/cc/animation/animation_export.h b/cc/animation/animation_export.h
 index d2495182ec5..0f0694767bd 100644
 --- a/cc/animation/animation_export.h

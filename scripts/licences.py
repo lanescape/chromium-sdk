@@ -29,20 +29,30 @@ import argparse, json, sys
 sys.path.insert(0, "tools/licenses")
 import licenses
 args = argparse.Namespace(extra_third_party_dirs=None, extra_allowed_dirs=None, exclude_dirs=None,
-                          scan_root=".", gn_out_dir=sys.argv[1], gn_target=sys.argv[2], enable_warnings=False,
+                          scan_root=".", gn_out_dir=sys.argv[1], gn_target=sys.argv[2], enable_warnings=True,
                           shipped_only=False, target_os=None)
-metadatas, _ = licenses._DiscoverMetadatas(args)
-print(json.dumps([{"name": m["Name"], "license": m.get("License", ""), "dir": m.get("dir", ".")}
-                  for m in metadatas]))
+# Diagnostics go to stderr, so stdout is only the answer.
+real_stdout, sys.stdout = sys.stdout, sys.stderr
+metadatas, had_errors = licenses._DiscoverMetadatas(args)
+sys.stdout = real_stdout
+print(json.dumps({"errors": bool(had_errors),
+                  "components": [{"name": m["Name"], "license": m.get("License", ""), "dir": m.get("dir", ".")}
+                                 for m in metadatas]}))
 '''
+# Rust crates: Chromium's metadata sits in third_party/rust/<crate>/<epoch>, and the source it builds is vendored.
+VENDORED = re.compile(r'//third_party/rust/chromium_crates_io/vendor/([^/"]+)/')
 
 
 def components(src, out):
     """Every third-party component the SDK's targets link or ship: name, licence and directory under src."""
     gn_out = os.path.relpath(out, src)
     text = subprocess.check_output([sys.executable, '-c', _DISCOVER, gn_out, TARGET], cwd=src, text=True)
+    answer = json.loads(text)
+    if answer['errors']:
+        # A component whose metadata Chromium can't read is left out of its credits: never publish without it.
+        raise SystemExit("Chromium's licence metadata has errors (above); no notices or source without them")
     found = []
-    for entry in json.loads(text):
+    for entry in answer['components']:
         directory = os.path.relpath(os.path.join(src, entry['dir']), src) if entry['dir'] else '.'
         entry['dir'] = directory
         entry['copyleft'] = bool(COPYLEFT.search(entry['license'])) and directory != '.'
@@ -77,6 +87,19 @@ def toolchain_notice(src, destination):
     shutil.copy2(Path(src)/'third_party/libc++/src/LICENSE.TXT', destination/'LICENSE.TXT')
 
 
+def source_dirs(src, directory):
+    """The directories that hold a component's source as built: its own, and for a Rust crate, its vendored
+    source, which its BUILD.gn names."""
+    dirs = [directory]
+    build = Path(src)/directory/'BUILD.gn'
+    if directory.startswith('third_party/rust/') and build.is_file():
+        for vendored in sorted(set(VENDORED.findall(build.read_text()))):
+            path = f'third_party/rust/chromium_crates_io/vendor/{vendored}'
+            if (Path(src)/path).is_dir() and path not in dirs:
+                dirs.append(path)
+    return dirs
+
+
 def slug(directory):
     return re.sub(r'[^a-z0-9.]+', '-', directory.lower()).strip('-')
 
@@ -87,11 +110,10 @@ def source_archives(src, out, output, version):
     for component in sorted(components(src, out), key=lambda c: c['dir']):
         if not component['copyleft']:
             continue
-        directory = Path(src)/component['dir']
         with tempfile.TemporaryDirectory() as tmp:
-            stage = Path(tmp)/component['dir']
-            shutil.copytree(directory, stage, symlinks=True,
-                            ignore=lambda _, names: [n for n in names if n in UNBUILT])
+            for directory in source_dirs(src, component['dir']):
+                shutil.copytree(Path(src)/directory, Path(tmp)/directory, symlinks=True,
+                                ignore=lambda _, names: [n for n in names if n in UNBUILT])
             asset = Path(output)/f'chromium-sdk-{version}-source-{slug(component["dir"])}.tar.zst'
             archive.write(tmp, asset)
         written.append({'name': asset.name, 'part': 'source', 'component': component['name'],
@@ -139,18 +161,22 @@ def snapshot_base(package_list):
 
 
 def fetch(url, destination, sha=None):
+    """Downloads a file into the cache, whole or not at all: a download a stopped machine cut short never
+    reaches its name."""
     if destination.exists() and (sha is None or sha256(destination) == sha):
         return
+    partial = destination.with_name(destination.name+'.partial')
     for attempt in range(5):
         try:
-            with urllib.request.urlopen(url, timeout=300) as stream, open(destination, 'wb') as out:
+            with urllib.request.urlopen(url, timeout=300) as stream, open(partial, 'wb') as out:
                 shutil.copyfileobj(stream, out)
             break
         except OSError:
             if attempt == 4:
                 raise
-    if sha is not None and sha256(destination) != sha:
+    if sha is not None and sha256(partial) != sha:
         raise SystemExit(f'{url} does not match its .dsc')
+    os.replace(partial, destination)
 
 
 def sha256(path):

@@ -32,8 +32,10 @@ def problems():
     if set(disks) != set(targets):
         found.append('.github/runners.json must declare one disk family for each target in targets.json')
     patches = sorted(p.relative_to(REPO).as_posix() for p in (REPO/'chromium/patches').glob('**/*.patch'))
-    keyed = sorted({'chromium/pin.json', 'chromium/gclient', 'chromium/args.gn', 'chromium/gn/BUILD.gn',
-                    'targets.json', *patches})
+    gn = sorted(p.relative_to(REPO).as_posix() for p in (REPO/'chromium/gn').iterdir())
+    # Everything that decides what a target's build compiles: its settings, sources, patch and arguments.
+    keyed = sorted({'chromium/pin.json', 'chromium/gclient', 'chromium/args.gn', 'targets.json', 'scripts/sdk.py',
+                    *gn, *patches})
     for family, declaration in disks.items():
         listed = declaration.get('from', [])
         for path in listed:

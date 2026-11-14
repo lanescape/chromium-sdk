@@ -23,10 +23,11 @@ There is one configuration per target, Chromium's release build, which embedders
 
 `chromium/patches/` holds the SDK's one change to Chromium, as one patch for each repository it touches, applied by `patch`. It adds the GN argument `chromium_sdk_exports`, which:
 
-- defines `CHROMIUM_SDK_EXPORTS` for every target, which every export header that keys its `visibility("default")` on `COMPONENT_BUILD` also takes, so a non-component build's shared library exports what a component build's libraries do;
+- defines `CHROMIUM_SDK_EXPORTS` for every target, which every export header that keys its `visibility("default")` on `COMPONENT_BUILD` (PartitionAlloc's, on its own `IS_COMPONENT_BUILD` flag) also takes, so a non-component build's shared library exports what a component build's libraries do;
 - keeps `PRESERVE_MOST` off in base and V8, as in a component build;
 - gives V8's thread-locals the model a shared library can hold, as in a component build (Blink's heap has an argument of its own for that, `blink_heap_inside_shared_library = true`, among the settings);
 - makes Skia, skcms, Abseil, BoringSSL and Perfetto, which choose their exports in GN, export as in a component build;
+- gives macOS's shared libc++ the `@rpath` install name a component build gives every library;
 - gives executables and shared libraries the `$ORIGIN` (or `@loader_path`) run path a component build gives them, since libc++ and FFmpeg are shared libraries here and the build runs executables of its own, such as protoc;
 - keeps whole-program vtable optimisation off;
 - and, whatever the argument, lets a macOS build without V8's context snapshot generate: Chrome's own app bundle, which the SDK never builds but GN always loads, lists V8's snapshot without depending on what makes it.

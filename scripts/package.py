@@ -38,8 +38,14 @@ DROP_PREFIX = ('-W', '-O', '-g', '-flto', '-fprofile-', '-fdebug-', '-ffile-comp
                '-fdata-sections', '-ffunction-sections', '-funique-section-names', '-fno-unique-section-names',
                '-fexperimental-relative-c++-abi-vtables=0')
 DROP_WITH_VALUE = {'-o', '-MF', '-MT', '-MQ', '-x'}
+# Chromium's explicit Clang modules need prebuilt module files that stay in its build; an embedder includes the
+# same headers as text.
+DROP_MODULES = ('-fmodules', '-fno-implicit-module-maps', '-fno-implicit-modules', '-fmodule-', '-fbuiltin-module-map',
+                '-fno-modules', '-fmodule-name', '-fmodules-')
 XCLANG_DROP = ('-add-plugin', '-load', '-plugin-arg-', '-debug-info-kind', '-fuse-ctor-homing',
-               '-fdebug-compilation-dir', '-fno-pch-timestamp')
+               '-fdebug-compilation-dir', '-fno-pch-timestamp', '-fmodules-local-submodule-visibility',
+               '-fmodules-disable-diagnostic-validation')
+INCLUDE_FLAGS = ('-isystem', '-idirafter', '-iquote')
 # Link flags that only tune or diagnose Chromium's own links, or choose where the binary finds its libraries,
 # which is the embedder's call.
 LINK_DROP_PREFIX = ('-flto', '-Wl,--thinlto', '-Wl,--lto', '-Wl,-mllvm', '-Wl,-plugin-opt', '-Wl,--icf',
@@ -52,6 +58,11 @@ LINK_DROP_PREFIX = ('-flto', '-Wl,--thinlto', '-Wl,--lto', '-Wl,-mllvm', '-Wl,-p
 
 class PathLeak(Exception):
     """A flag would carry a build machine's path into the SDK."""
+
+
+def has_path(arg):
+    """Whether a flag names a path in the build tree or an absolute one, anywhere in it."""
+    return '../' in arg or arg.startswith(('gen/', 'obj/', './')) or re.search(r'(^|[=,:])/', arg) is not None
 
 
 def rewrite_path(path, mapping):
@@ -67,7 +78,7 @@ def rewrite_path(path, mapping):
 
 def path_mapping(target_entry):
     """Prefixes of paths in the build's commands, relative to the build directory, longest first."""
-    pairs = [('gen', '{sdk}/gen'), ('../..', '{sdk}/include'), ('.', '{sdk}/lib')]
+    pairs = [('gen', '{sdk}/gen'), ('../..', '{sdk}/include')]
     if target_entry.get('sysroot'):
         pairs.append((f'../../{target_entry["sysroot"]}', '{sdk}/sysroot'))
     pairs.append(('../../build/mac_files/xcode_binaries/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs',
@@ -111,7 +122,8 @@ def compile_flags(argv, mapping):
         if arg in DROP_WITH_VALUE:
             i += 2
             continue
-        if arg in DROP_EXACT or arg.startswith(DROP_PREFIX) or arg.endswith(('.cc', '.c', '.mm', '.m', '.cpp')):
+        if arg in DROP_EXACT or arg.startswith(DROP_PREFIX + DROP_MODULES) or \
+                arg.endswith(('.cc', '.c', '.mm', '.m', '.cpp')):
             i += 1
             continue
         if arg.startswith('-D'):
@@ -120,15 +132,17 @@ def compile_flags(argv, mapping):
             value = arg[2:] or nxt
             includes.append(mapped(value, mapping))
             i += 0 if arg[2:] else 1
-        elif arg in ('-isystem', '-idirafter', '-iquote'):
-            (system_includes if arg != '-iquote' else includes).append(mapped(nxt, mapping))
-            i += 1
+        elif arg.startswith(INCLUDE_FLAGS):
+            flag = next(flag for flag in INCLUDE_FLAGS if arg.startswith(flag))
+            value = arg[len(flag):] or nxt
+            (system_includes if flag != '-iquote' else includes).append(mapped(value, mapping))
+            i += 0 if arg[len(flag):] else 1
         elif arg.startswith('--sysroot='):
             flags.append('--sysroot='+mapped(arg[len('--sysroot='):], mapping))
         elif arg == '-isysroot':
             flags += ['-isysroot', mapped(nxt, mapping)]
             i += 1
-        elif '../' in arg or arg.startswith(('gen/', 'obj/', './')):
+        elif has_path(arg):
             raise PathLeak(arg)
         else:
             flags.append(arg)
@@ -136,35 +150,26 @@ def compile_flags(argv, mapping):
     return flags, defines, includes, system_includes
 
 
-def link_flags(argv, mapping):
-    """The flags and inputs an embedder links with, from the probe's link command. Returns (flags, libraries,
-    system_libs, frameworks): libraries are SDK files, system_libs names for -l."""
-    args = list(argv)
-    if '--' in args:
-        args = args[args.index('--')+1:]
-    args = args[1:]  # the compiler driver, which the toolchain names
+def link_flags(variables, mapping):
+    """The flags and inputs an embedder links with, from GN's variables for the probe's link. Returns (flags,
+    libraries, system_libs, frameworks): libraries are the SDK's files, system_libs names for -l."""
     flags, libraries, system_libs, frameworks = [], [], [], []
+    args = variables.get('ldflags', []) + variables.get('libs', []) + variables.get('frameworks', [])
     i = 0
     while i < len(args):
         arg = args[i]
         nxt = args[i+1] if i+1 < len(args) else None
-        if arg == '-o':
-            i += 2
-            continue
-        if arg.startswith('@') or arg.endswith('.o') or arg in ('-Wl,--start-group', '-Wl,--end-group'):
+        if arg.startswith(LINK_DROP_PREFIX) or re.fullmatch(r'-Wl,-O\d', arg) or arg.startswith(('-g', '-Wcrl,')):
             i += 1
             continue
-        if arg.startswith(LINK_DROP_PREFIX) or re.fullmatch(r'-Wl,-O\d', arg):
-            i += 1
-            continue
-        if arg == '-framework' or arg == '-weak_framework':
+        if arg in ('-framework', '-weak_framework'):
             frameworks.append(nxt)
             i += 2
             continue
         if arg.startswith('-l'):
             system_libs.append(arg[2:])
-        elif re.match(r'^\./lib[^/]+\.(so|dylib)$', arg):
-            libraries.append('{sdk}/lib/'+arg[2:])
+        elif arg.endswith('.a') and not arg.startswith('-'):
+            libraries.append(mapped(arg, mapping))
         elif arg.startswith('--sysroot='):
             flags.append('--sysroot='+mapped(arg[len('--sysroot='):], mapping))
         elif arg == '-isysroot':
@@ -174,19 +179,39 @@ def link_flags(argv, mapping):
             flags.append('-L'+mapped(arg[2:], mapping))
         elif arg.startswith('-Wl,-rpath-link='):
             flags.append('-Wl,-rpath-link='+mapped(arg[len('-Wl,-rpath-link='):], mapping))
-        elif '../' in arg or arg.startswith(('gen/', 'obj/', './')):
+        elif has_path(arg):
             raise PathLeak(arg)
         else:
             flags.append(arg)
         i += 1
+    for solib in variables.get('solibs', []):
+        if not re.fullmatch(r'\./lib[^/]+\.(so|dylib)', solib):
+            raise PathLeak(solib)
+        libraries.append('{sdk}/lib/'+solib[2:])
     return flags, libraries, system_libs, frameworks
 
 
-def ninja_command(out, output):
-    """The command ninja runs to make one output of the build."""
-    ninja = Path(out).parent.parent/'third_party/ninja/ninja'
-    text = subprocess.check_output([str(ninja), '-C', str(out), '-t', 'commands', '-s', output], text=True)
-    return shlex.split(text.strip().splitlines()[-1])
+def unescape(value):
+    """A ninja variable's value as the shell words GN wrote."""
+    return shlex.split(value.replace('$ ', ' ').replace('$:', ':').replace('$$', '$'))
+
+
+def target_variables(ninja_file):
+    """GN's variables for a target: its compile settings, and those of its link (indented under the link)."""
+    variables = {}
+    for line in Path(ninja_file).read_text().splitlines():
+        match = re.match(r'^\s*(defines|include_dirs|cflags|cflags_c|cflags_cc|cflags_objc|cflags_objcc|ldflags|libs|'
+                         r'frameworks|solibs) = ?(.*)$', line)
+        if match:
+            variables[match.group(1)] = unescape(match.group(2))
+    return variables
+
+
+def compile_argv(variables, language):
+    """The compile command's settings for a language, as Chromium's compile rule orders them."""
+    specific = {'c++': 'cflags_cc', 'objective-c++': 'cflags_objcc', 'c': 'cflags_c'}[language]
+    return (['clang++'] + variables.get('defines', []) + variables.get('include_dirs', []) +
+            variables.get('cflags', []) + variables.get(specific, []))
 
 
 def gn_json(src, out, *args):
@@ -221,26 +246,18 @@ def root_headers(src, out):
                   else '../../'+path[2:] for path in roots)
 
 
-def closure(compile_argv, out, roots, language, jobs):
+def closure(variables, out, roots, language, jobs):
     """Every file the roots include, relative to the build directory, and the roots that don't preprocess alone
     with the SDK's flags, such as another platform's."""
-    base = [arg for arg in compile_argv if not arg.endswith(('.cc', '.mm'))]
-    cleaned = []
-    skip = False
-    for arg in base:
-        if skip:
-            skip = False
-            continue
-        if arg in ('-o', '-MF', '-c'):
-            skip = arg != '-c'
-            continue
-        if arg == '-MMD':
-            continue
-        cleaned.append(arg)
+    identity = [(prefix, prefix) for prefix, _ in path_mapping({'sysroot': None})] + [('/', '/')]
+    flags, defines, includes, system_includes = compile_flags(compile_argv(variables, language), identity)
+    command = (['../../third_party/llvm-build/Release+Asserts/bin/clang++', '-x', language] + flags +
+               ['-D'+define for define in defines] + ['-I'+path for path in includes] +
+               [part for path in system_includes for part in ('-isystem', path)] + ['-M', '-w'])
 
     def one(root):
-        result = subprocess.run(cleaned+['-x', language, '-M', '-w', root], cwd=out, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        result = subprocess.run(command+[root], cwd=out, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL)
         if result.returncode:
             return root, None
         text = result.stdout.replace('\\\n', ' ')
@@ -271,6 +288,7 @@ def package(target, checkout, out, version, output):
     src = checkout/'src'
     out = Path(out)
     toolchain_src = src/'third_party/llvm-build/Release+Asserts'
+    output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     stage = output/'stage'/target
     if stage.exists():
@@ -278,19 +296,17 @@ def package(target, checkout, out, version, output):
     mapping = path_mapping(entry)
     suffix = '.dylib' if system == 'mac' else '.so'
 
-    # Flags, from the probe's own commands.
-    compile_cc = ninja_command(out, 'obj/chromium_sdk/embedder_probe/embedder_probe.o')
-    flags_cc, defines, includes, system_includes = compile_flags(compile_cc, mapping)
+    # Flags, from GN's settings for the probe's compiles and link.
+    variables = target_variables(out/'obj/chromium_sdk/embedder_probe.ninja')
+    flags_cc, defines, includes, system_includes = compile_flags(compile_argv(variables, 'c++'), mapping)
     languages = {'c++': flags_cc}
     if system == 'mac':
-        compile_mm = ninja_command(out, 'obj/chromium_sdk/embedder_probe/embedder_probe_mac.o')
-        languages['objective-c++'] = compile_flags(compile_mm, mapping)[0]
-    link = ninja_command(out, './embedder_probe')
-    ldflags, libraries, system_libs, frameworks = link_flags(link, mapping)
+        languages['objective-c++'] = compile_flags(compile_argv(variables, 'objective-c++'), mapping)[0]
+    ldflags, libraries, system_libs, frameworks = link_flags(variables, mapping)
 
     # Headers: the closure of the public targets' headers under those flags.
     roots = root_headers(src, out)
-    files, failed = closure(compile_cc, out, roots, 'objective-c++' if system == 'mac' else 'c++',
+    files, failed = closure(variables, out, roots, 'objective-c++' if system == 'mac' else 'c++',
                             os.cpu_count() or 8)
     headers = {}
     for path in sorted(files):
@@ -312,7 +328,9 @@ def package(target, checkout, out, version, output):
     lib = part('lib')
     (lib/'lib').mkdir()
     runtime_libraries = []
-    for name in (f'libchromium{suffix}', f'libc++{suffix}', f'libffmpeg{suffix}'):
+    # What the probe links, and FFmpeg, which the library loads.
+    names = [solib[2:] for solib in variables.get('solibs', [])] + [f'libffmpeg{suffix}']
+    for name in names:
         shutil.copy2(out/name, lib/'lib'/name)
         runtime_libraries.append(f'lib/{name}')
     resources = lib/'resources'

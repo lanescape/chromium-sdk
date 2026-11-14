@@ -42,6 +42,18 @@ class Manifest(unittest.TestCase):
                 publish.write_manifest(tmp, '1', 'c'*40, PIN, {'chromium-sdk-1-x.tar.zst': {},
                                                                'chromium-sdk-1-y.tar.zst': {}})
 
+    def test_two_jobs_may_describe_one_asset_the_same_way(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            entry = {'name': 'chromium-sdk-1-source-x.tar.zst', 'part': 'source', 'size': 3, 'dir': 'x'}
+            (tmp/'assets-a.json').write_text(json.dumps([entry]))
+            (tmp/'assets-b.json').write_text(json.dumps([dict(entry, size=3)]))
+            described = publish.merge_descriptions([tmp/'assets-a.json', tmp/'assets-b.json'])
+            self.assertEqual(described, {'chromium-sdk-1-source-x.tar.zst': {'part': 'source', 'dir': 'x'}})
+            (tmp/'assets-c.json').write_text(json.dumps([dict(entry, dir='y')]))
+            with self.assertRaises(SystemExit):
+                publish.merge_descriptions([tmp/'assets-a.json', tmp/'assets-c.json'])
+
     def test_size_limit(self):
         self.assertEqual(publish.too_large({'a': publish.LIMIT-1, 'b': publish.LIMIT, 'c': publish.LIMIT+1}),
                          ['b', 'c'])

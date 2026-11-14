@@ -5,8 +5,8 @@ The SDK's one change to Chromium (specs/0002-build.md, The patch). It adds the b
 `chromium_sdk_exports`, which makes a non-component build's shared libraries export what a component build
 exports between its components, and turns off what can't hold across that boundary:
 
-- Every export header that keys its `visibility("default")` annotation on `COMPONENT_BUILD` also takes
-  `CHROMIUM_SDK_EXPORTS`, which the argument defines for every target. One rule covers them all, so moving the
+- Every export header that keys its `visibility("default")` annotation on `COMPONENT_BUILD` (PartitionAlloc's on
+  its own IS_COMPONENT_BUILD flag) also takes `CHROMIUM_SDK_EXPORTS`, which the argument defines for every target. One rule covers them all, so moving the
   pin only needs this script run again.
 - `PRESERVE_MOST` in base and V8 stays off, as in a component build: a lazily bound call to an exported function
   would clobber the registers it promises to keep.
@@ -14,6 +14,7 @@ exports between its components, and turns off what can't hold across that bounda
   as in a component build. V8 has its own argument, `v8_expose_public_symbols` (chromium/args.gn).
 - V8's thread-locals use a model a shared library can hold, as in a component build, rather than the
   executable-only local-exec. (Blink's heap has an argument of its own for this, set in chromium/args.gn.)
+- macOS's shared libc++ gets an @rpath install name, as every library in a component build does.
 - Executables and shared libraries find the shared libraries beside them, as in a component build, since libc++
   and FFmpeg are shared libraries here too, and the build runs executables of its own, such as protoc.
 - A macOS build without V8's context snapshot generates: Chrome's own bundle, which the SDK never builds, lists
@@ -45,6 +46,9 @@ DIRECTIVE = re.compile(r'^\s*#\s*(if|elif)\b')
 IFDEF = re.compile(r'^(\s*#\s*)(ifdef|ifndef)\s+COMPONENT_BUILD\b')
 TOKEN = 'defined(COMPONENT_BUILD)'
 REPLACEMENT = f'(defined(COMPONENT_BUILD) || defined({DEFINE}))'
+# PartitionAlloc's export header keys on its own build flag rather than the define.
+PA_TOKEN = 'PA_BUILDFLAG(IS_COMPONENT_BUILD)'
+PA_REPLACEMENT = f'(PA_BUILDFLAG(IS_COMPONENT_BUILD) || defined({DEFINE}))'
 
 # Exact edits to GN files: (path relative to src, old text, new text). Each old text must occur exactly once.
 GN_EDITS = (
@@ -87,6 +91,13 @@ GN_EDITS = (
      '  if (v8_monolithic && v8_monolithic_for_shared_library) {\n    defines += [ "V8_TLS_USED_IN_LIBRARY" ]\n',
      '  if ((v8_monolithic && v8_monolithic_for_shared_library) ||\n'
      f'      (defined({ARG}) && {ARG})) {{\n    defines += [ "V8_TLS_USED_IN_LIBRARY" ]\n'),
+    # A non-component macOS build gives a shared library no install name, so what links libc++ would look for it
+    # by its build path; a component build gives every library @rpath/<name>, as the SDK's own do.
+    ('buildtools/third_party/libc++/BUILD.gn',
+     '    # Use libc++_chrome to avoid conflicting with system libc++\n    output_name = "libc++_chrome"\n',
+     '    # Use libc++_chrome to avoid conflicting with system libc++\n    output_name = "libc++_chrome"\n'
+     f'    if (is_apple && {ARG}) {{\n'
+     '      ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]\n    }\n'),
     ('skia/BUILD.gn',
      '  if (is_component_build) {\n    defines += [ "SKIA_DLL" ]\n  }\n',
      f'  if (is_component_build || {ARG}) {{\n    defines += [ "SKIA_DLL" ]\n  }}\n'),
@@ -121,7 +132,7 @@ def rewrite_header(text):
             negate = '!' if match.group(2) == 'ifndef' else ''
             line = f'{match.group(1)}if {negate}{REPLACEMENT}{line[match.end():]}'
         elif DIRECTIVE.match(line) or continuing:
-            line = line.replace(TOKEN, REPLACEMENT)
+            line = line.replace(TOKEN, REPLACEMENT).replace(PA_TOKEN, PA_REPLACEMENT)
         continuing = (DIRECTIVE.match(line) is not None or continuing) and line.rstrip('\n').endswith('\\')
         out.append(line)
     return ''.join(out)

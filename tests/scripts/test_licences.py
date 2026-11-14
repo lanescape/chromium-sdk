@@ -55,6 +55,19 @@ class Copyleft(unittest.TestCase):
         for name in ('BSD-3-Clause', 'Apache-2.0', 'MIT', 'ISC', 'Zlib', 'FFT2D', 'Apache-2.0 WITH LLVM-exception'):
             self.assertFalse(licences.COPYLEFT.search(name), name)
 
+    def test_rust_crates_include_their_vendored_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            meta = tmp/'third_party/rust/symphonia_core/v0_6'
+            meta.mkdir(parents=True)
+            (meta/'BUILD.gn').write_text('sources = [ "//third_party/rust/chromium_crates_io/vendor/'
+                                         'symphonia-core-v0_6/src/lib.rs" ]\n')
+            (tmp/'third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6/src').mkdir(parents=True)
+            self.assertEqual(licences.source_dirs(tmp, 'third_party/rust/symphonia_core/v0_6'),
+                             ['third_party/rust/symphonia_core/v0_6',
+                              'third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6'])
+            self.assertEqual(licences.source_dirs(tmp, 'third_party/ffmpeg'), ['third_party/ffmpeg'])
+
     def test_slug(self):
         self.assertEqual(licences.slug('third_party/ffmpeg'), 'third-party-ffmpeg')
         self.assertEqual(licences.slug('third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6'),

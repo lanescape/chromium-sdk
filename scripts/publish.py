@@ -72,6 +72,19 @@ def gather(destination, sources):
     return seen
 
 
+def merge_descriptions(listings):
+    """What the jobs said about each asset, by name. Two jobs may describe one asset, but only the same way."""
+    described = {}
+    for listing in listings:
+        for entry in json.loads(Path(listing).read_text()):
+            name = entry['name']
+            description = {key: value for key, value in entry.items() if key not in ('name', 'size')}
+            if name in described and described[name] != description:
+                raise SystemExit(f'two jobs described {name} differently')
+            described[name] = description
+    return described
+
+
 def write_manifest(directory, version, commit, pin, described):
     """manifest.json lists every asset in the directory with its size and SHA-256; SHA256SUMS lists those and the
     manifest. `described` maps an asset's name to what the jobs that made it said about it."""
@@ -269,15 +282,7 @@ def main():
         gather(args.directory, args.sources)
         return 0
     if args.command == 'manifest':
-        described = {}
-        for listing in sorted(args.directory.glob('assets-*.json')):
-            for entry in json.loads(listing.read_text()):
-                if entry['name'] in described and described[entry['name']] != entry:
-                    previous = described[entry['name']]
-                    if {k: v for k, v in previous.items() if k != 'size'} != \
-                            {k: v for k, v in entry.items() if k != 'size'}:
-                        raise SystemExit(f'two jobs described {entry["name"]} differently')
-                described[entry['name']] = {k: v for k, v in entry.items() if k not in ('name', 'size')}
+        described = merge_descriptions(sorted(args.directory.glob('assets-*.json')))
         pin = json.loads((Path(__file__).resolve().parent.parent/'chromium/pin.json').read_text())
         write_manifest(args.directory, args.version, args.commit, pin, described)
         print((args.directory/SUMS).read_text(), end='')

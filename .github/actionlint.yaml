@@ -1,0 +1,13 @@
+# actionlint's configuration (checks.yml). The runner service's and Blacksmith's selectors are labels it doesn't
+# know; GitHub's concurrency `queue` is newer than its schema.
+self-hosted-runner:
+  labels:
+    - lanescape-2vcpu-linux-amd64
+    - lanescape-16vcpu-linux-amd64
+    - lanescape-16vcpu-linux-arm64
+    - lanescape-80vcpu-linux-amd64-spot
+    - blacksmith-12vcpu-macos-26
+paths:
+  .github/workflows/cd.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
