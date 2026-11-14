@@ -1,8 +1,8 @@
 name: Build an SDK target
 description: >-
-  Builds one target's SDK on a runner-service machine whose work disk is mounted at /work, packages it, and builds
-  the test embedder against the package (specs/0003-ci-cd.md). The job asks for the disk and checks out this
-  repository first, and asks to save the disk last.
+  Builds one target's SDK on a runner-service machine whose work disk, mounted at /work, holds the Chromium build,
+  packages it, and hands the package to the embedder's build as an artifact (specs/0003-ci-cd.md). The job asks for
+  the disk and checks out this repository first, and asks to save the disk last.
 inputs:
   target:
     description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
@@ -11,7 +11,7 @@ inputs:
     description: The version the packages carry
     required: true
   release:
-    description: "'true' to also write the corresponding source and keep every asset for publishing"
+    description: "'true' to also write the corresponding source, and keep the assets for publishing"
     required: false
     default: 'false'
   apple-sdk-provider:
@@ -68,44 +68,14 @@ runs:
           # One Linux job also makes the sysroots' Debian sources and this repository's.
           sysroots=()
           [ "$TARGET" = linux-amd64 ] && sysroots=(--sysroots)
-          python3 scripts/sdk.py sources "$TARGET" --version "$VERSION" --output "$assets" "${sysroots[@]}"
+          python3 scripts/sdk.py sources "$TARGET" --version "$VERSION" --output "$assets" \
+            --cache "$RUNNER_TEMP/debian-cache" "${sysroots[@]}"
         fi
-    - name: Build the test embedder against the package
-      shell: bash
-      env:
-        TARGET: ${{ inputs.target }}
-        VERSION: ${{ inputs.version }}
-      run: |
-        set -euo pipefail
-        sdk="$RUNNER_TEMP/sdk-$TARGET"
-        rm -rf "$sdk"
-        mkdir -p "$sdk"
-        for part in lib headers toolchain sysroot; do
-          file="$RUNNER_TEMP/assets-$TARGET/chromium-sdk-$VERSION-$TARGET-$part.tar.zst"
-          if [ -f "$file" ]; then
-            tar --zstd -xf "$file" -C "$sdk"
-          fi
-        done
-        apple=()
-        if [ "$TARGET" = macos-arm64 ]; then
-          apple=(--apple-sdk /work/chromium/src/build/mac_files/xcode_binaries/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk)
-        fi
-        python3 tests/embedder/build.py --sdk "$sdk" --output "$RUNNER_TEMP/embedder-$TARGET" "${apple[@]}"
-        # A tar keeps the executable's mode, which an artifact alone would lose.
-        tar -cf "$RUNNER_TEMP/embedder-$TARGET.tar" -C "$RUNNER_TEMP/embedder-$TARGET" .
-    - name: Hand the test embedder to its test machine
+    - name: Hand the package on
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: embedder-${{ inputs.target }}
-        path: ${{ runner.temp }}/embedder-${{ inputs.target }}.tar
-        retention-days: 3
-        if-no-files-found: error
-    - name: Keep the assets for publishing
-      if: inputs.release == 'true'
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-      with:
-        name: assets-${{ inputs.target }}
+        name: sdk-${{ inputs.target }}
         path: ${{ runner.temp }}/assets-${{ inputs.target }}
-        retention-days: 7
+        retention-days: ${{ inputs.release == 'true' && 7 || 3 }}
         compression-level: 0
         if-no-files-found: error

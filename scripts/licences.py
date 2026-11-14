@@ -74,10 +74,11 @@ def gaps():
 
 
 def unexplained(diagnostics, known):
-    """The errors in licenses.py's diagnostics that the reviewed gaps don't explain."""
+    """The diagnostics of licenses.py that the reviewed gaps don't explain. Every message, a line that doesn't
+    start with a space, must name a reviewed gap; indented lines are a message's details."""
     unknown = []
     for line in diagnostics.splitlines():
-        if not line.startswith('Error'):
+        if not line.strip() or line[0].isspace():
             continue
         match = GAP_MISSING.match(line) or GAP_ERRORS.match(line)
         if not match or match.group(1) not in known:

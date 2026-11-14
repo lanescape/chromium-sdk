@@ -73,9 +73,42 @@ jobs:
           apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
       - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
 
+  embedder-linux:
+    name: Embedder ${{ matrix.target }}
+    needs: build-linux
+    if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux-amd64, linux-arm64]
+    runs-on: lanescape-16vcpu-linux-amd64
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: ./.github/actions/embedder
+        with:
+          target: ${{ matrix.target }}
+
+  embedder-macos:
+    name: Embedder macos-arm64
+    needs: build-macos
+    if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: lanescape-16vcpu-linux-amd64
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: ./.github/actions/embedder
+        with:
+          target: macos-arm64
+          apple-sdk-provider: ${{ vars.APPLE_SDK_WORKLOAD_IDENTITY_PROVIDER }}
+          apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
+
   test:
     name: Test ${{ matrix.target }}
-    needs: [build-linux, build-macos]
+    needs: [embedder-linux, embedder-macos]
     if: ${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}
     strategy:
       fail-fast: false

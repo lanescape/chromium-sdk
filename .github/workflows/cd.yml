@@ -86,9 +86,40 @@ jobs:
           apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
       - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
 
+  embedder-linux:
+    name: Embedder ${{ matrix.target }}
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux-amd64, linux-arm64]
+    runs-on: lanescape-16vcpu-linux-amd64
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: ./.github/actions/embedder
+        with:
+          target: ${{ matrix.target }}
+
+  embedder-macos:
+    name: Embedder macos-arm64
+    needs: build-macos
+    runs-on: lanescape-16vcpu-linux-amd64
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: ./.github/actions/embedder
+        with:
+          target: macos-arm64
+          apple-sdk-provider: ${{ vars.APPLE_SDK_WORKLOAD_IDENTITY_PROVIDER }}
+          apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
+
   test:
     name: Test ${{ matrix.target }}
-    needs: [build-linux, build-macos]
+    needs: [embedder-linux, embedder-macos]
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +166,7 @@ jobs:
           fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: assets-*
+          pattern: sdk-*
           path: ${{ runner.temp }}/jobs
       - name: Publish the release
         env:

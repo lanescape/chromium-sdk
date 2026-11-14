@@ -67,6 +67,17 @@ class RewriteHeader(unittest.TestCase):
 
 
 class CarriedPatches(unittest.TestCase):
+    def test_every_gn_edit_is_carried(self):
+        """The checked-in patches are the generator's output: every line each GN edit adds is in its patch."""
+        repos = ('v8', 'third_party/perfetto')
+        for path, old, new in export_patch.GN_EDITS:
+            repo = next((r for r in repos if path.startswith(r+'/')), '')
+            patch = (REPO/'chromium/patches'/(f'{repo}.patch' if repo else 'src.patch')).read_text()
+            relative = path[len(repo)+1:] if repo else path
+            self.assertIn(f'+++ b/{relative}', patch, path)
+            for line in set(new.splitlines()) - set(old.splitlines()):
+                self.assertIn('+'+line, patch.splitlines(), f'{path}: {line}')
+
     def test_patches_only_add_the_sdk_switch(self):
         """Every line the carried patches add mentions the SDK's switch, or is a comment or GN syntax around it."""
         for patch in sorted((REPO/'chromium/patches').glob('**/*.patch')):

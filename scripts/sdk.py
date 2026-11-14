@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 DEPOT_TOOLS_URL = 'https://chromium.googlesource.com/chromium/tools/depot_tools.git'
 CHROMIUM_URL = 'https://chromium.googlesource.com/chromium/src.git'
 HERMETIC_XCODE = 'build/mac_files/xcode_binaries'
+APPLE_SDK_IN_XCODE = 'Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
 GN_DIR = 'chromium_sdk'
 
 
@@ -124,7 +125,11 @@ def step_checkout(target, args):
     record_path = checkout_record()
     gclient = (REPO/'chromium/gclient').read_text()
     on_disk = (root/'.gclient').read_text() if (root/'.gclient').exists() else None
-    if record_path.exists() and json.loads(record_path.read_text()) == wanted and head == commit and on_disk == gclient:
+    try:
+        recorded = json.loads(record_path.read_text()) if record_path.exists() else None
+    except ValueError:
+        recorded = None  # Never whole: treat it as unfinished.
+    if recorded == wanted and head == commit and on_disk == gclient:
         print('checkout: already at the pin, with this .gclient', flush=True)
         return
     record_path.unlink(missing_ok=True)
@@ -147,7 +152,9 @@ def step_checkout(target, args):
     reset = ['--reset'] if head != commit else []
     run('gclient', 'sync', '--nohooks', '--no-history', '--force', *reset, '-r', f'src@{commit}', cwd=root)
     run('gclient', 'runhooks', cwd=root)
-    record_path.write_text(json.dumps(wanted)+'\n')
+    partial = record_path.with_name(record_path.name+'.partial')
+    partial.write_text(json.dumps(wanted)+'\n')
+    os.replace(partial, record_path)
 
 
 # packages
@@ -175,7 +182,8 @@ def step_mac_sdk(target, args):
     if not entry:
         print(f'{target} needs no Apple SDK', flush=True)
         return
-    destination = checkout_root()/'src'/HERMETIC_XCODE
+    # Where Chromium looks for a hermetic Xcode, or for an embedder's build, wherever it's asked.
+    destination = Path(args.destination) if args.destination else checkout_root()/'src'/HERMETIC_XCODE
     marker = destination/'.chromium-sdk-apple-sdk'
     if marker.is_file() and marker.read_text() == entry['sha256']:
         print('mac-sdk: the pinned SDK is in place', flush=True)
@@ -363,8 +371,10 @@ def step_sources(target, args):
         linux = [(entry['sysroot'], 'build/linux/sysroot_scripts/generated_package_lists/bullseye.' +
                   {'x64': 'amd64', 'arm64': 'arm64'}[entry['target_cpu']])
                  for entry in targets().values() if entry.get('sysroot')]
-        written.append(licences.sysroot_sources(checkout_root()/'src', linux, checkout_root().parent/'debian-cache',
-                                                output, args.version, 'debian-bullseye-sysroots'))
+        # Not on the kept disk, which holds only the build: the job downloads them each time.
+        cache = Path(args.cache) if args.cache else Path(tempfile.gettempdir())/'chromium-sdk-debian-cache'
+        written.append(licences.sysroot_sources(checkout_root()/'src', linux, cache, output, args.version,
+                                                'debian-bullseye-sysroots'))
         written.append(licences.sdk_source(output, args.version))
     for entry in written:
         summary(f'{entry["name"]}: {entry["size"]/1024**2:.0f} MiB')
@@ -400,8 +410,11 @@ def main(argv=None):
     parser.add_argument('target', choices=targets())
     parser.add_argument('--jobs', type=int, help='build: parallel jobs, for a machine short of memory')
     parser.add_argument('--archive', help="mac-sdk: a local copy of the pinned archive, instead of the bucket's")
+    parser.add_argument('--destination', help="mac-sdk: install it here rather than in the checkout; its SDK is "
+                        "then <destination>/" + APPLE_SDK_IN_XCODE)
     parser.add_argument('--version', help='package: the version the package carries')
     parser.add_argument('--output', help='package, sources: the directory to write assets to')
+    parser.add_argument('--cache', help="sources: where to keep Debian's downloads (default: the system's temp)")
     parser.add_argument('--sysroots', action='store_true',
                         help="sources: also the Linux sysroots' Debian sources and this repository's")
     args = parser.parse_args(argv)

@@ -1,3 +1,16 @@
+diff --git a/base/allocator/partition_allocator/src/partition_alloc/BUILD.gn b/base/allocator/partition_allocator/src/partition_alloc/BUILD.gn
+index a93b1d54a43..84ba54edefa 100644
+--- a/base/allocator/partition_allocator/src/partition_alloc/BUILD.gn
++++ b/base/allocator/partition_allocator/src/partition_alloc/BUILD.gn
+@@ -358,7 +358,7 @@ if (is_clang_or_gcc) {
+   }
+ 
+   config("mac_no_default_new_delete_symbols") {
+-    if (!is_component_build) {
++    if (!is_component_build && !(defined(chromium_sdk_exports) && chromium_sdk_exports)) {
+       # This is already set when we compile libc++, see
+       # buildtools/third_party/libc++/BUILD.gn. But it needs to be set here as
+       # well, since the shim defines the symbols, to prevent them being
 diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/component_export.h b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/component_export.h
 index 21a7b007719..0e8fecc945d 100644
 --- a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/component_export.h

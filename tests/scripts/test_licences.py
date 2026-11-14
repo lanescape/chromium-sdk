@@ -83,6 +83,8 @@ class Copyleft(unittest.TestCase):
         self.assertEqual(licences.unexplained(diagnostics.replace('third_party/rust', 'third_party/new'), known),
                          ['third_party/new'])
         self.assertEqual(licences.unexplained('Error: something else\n', known), ['Error: something else'])
+        duplicate = "Invalid metadata file: duplicate 'Name' in third_party/x/README.chromium\n"
+        self.assertEqual(licences.unexplained(duplicate, known), [duplicate.strip()])
 
     def test_reviewed_gaps_are_permissive(self):
         for directory, entry in licences.gaps().items():

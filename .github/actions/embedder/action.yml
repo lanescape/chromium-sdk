@@ -1,0 +1,62 @@
+name: Build the test embedder
+description: >-
+  Builds the test embedder against a target's packaged SDK, on a Linux machine with no Chromium checkout, from
+  nothing but the package's parts, and hands it to its test machine (specs/0003-ci-cd.md). The job checks out
+  this repository first.
+inputs:
+  target:
+    description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
+    required: true
+  apple-sdk-provider:
+    description: macOS only. The workload identity provider that may read the Apple SDK's bucket
+    required: false
+    default: ''
+  apple-sdk-service-account:
+    description: macOS only. The service account that provider signs in as
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: sdk-${{ inputs.target }}
+        path: ${{ runner.temp }}/package
+    - name: Sign in to read the Apple SDK
+      if: inputs.target == 'macos-arm64'
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.apple-sdk-provider }}
+        service_account: ${{ inputs.apple-sdk-service-account }}
+    - if: inputs.target == 'macos-arm64'
+      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+    - name: Build the test embedder against the package
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        set -euo pipefail
+        sdk="$RUNNER_TEMP/sdk"
+        mkdir -p "$sdk"
+        for part in lib headers toolchain sysroot; do
+          for file in "$RUNNER_TEMP"/package/chromium-sdk-*-"$TARGET-$part".tar.zst; do
+            if [ -f "$file" ]; then
+              tar --zstd -xf "$file" -C "$sdk"
+            fi
+          done
+        done
+        apple=()
+        if [ "$TARGET" = macos-arm64 ]; then
+          # The embedder's own Apple SDK, which the SDK never ships.
+          python3 scripts/sdk.py mac-sdk "$TARGET" --destination "$RUNNER_TEMP/xcode"
+          apple=(--apple-sdk "$RUNNER_TEMP/xcode/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")
+        fi
+        python3 tests/embedder/build.py --sdk "$sdk" --output "$RUNNER_TEMP/embedder-$TARGET" "${apple[@]}"
+        # A tar keeps the executable's mode, which an artifact alone would lose.
+        tar -cf "$RUNNER_TEMP/embedder-$TARGET.tar" -C "$RUNNER_TEMP/embedder-$TARGET" .
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: embedder-${{ inputs.target }}
+        path: ${{ runner.temp }}/embedder-${{ inputs.target }}.tar
+        retention-days: 3
+        if-no-files-found: error
