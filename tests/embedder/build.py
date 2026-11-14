@@ -43,12 +43,15 @@ def compile_command(description, language, source, output, sdk, apple_sdk):
 
 def link_command(description, objects, output, sdk, apple_sdk):
     link = description['link']
-    rpath = '-Wl,-rpath,@loader_path' if description['system'] == 'mac' else '-Wl,-rpath,$ORIGIN'
+    mac = description['system'] == 'mac'
+    rpath = '-Wl,-rpath,@loader_path' if mac else '-Wl,-rpath,$ORIGIN'
+    # The embedder's own Objective-C uses AppKit, which a macOS link must name.
+    own = ['-framework', 'AppKit', '-framework', 'Foundation'] if mac else []
     return ([expand(description['toolchain']['cxx'], sdk, apple_sdk)] +
             [expand(flag, sdk, apple_sdk) for flag in link['flags']] + [str(o) for o in objects] +
             [expand(library, sdk, apple_sdk) for library in link['libraries']] +
             ['-l'+name for name in link['system_libs']] +
-            [part for name in link['frameworks'] for part in ('-framework', name)] +
+            [part for name in link['frameworks'] for part in ('-framework', name)] + own +
             [rpath, '-o', str(output)])
 
 

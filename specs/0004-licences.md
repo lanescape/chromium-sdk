@@ -9,7 +9,8 @@ Every target's `notices/` directory, in the `lib` part and as the `notices` part
 - `LICENSE.chromium`, Chromium's licence;
 - `CREDITS.html`, the licences of every third-party component the SDK's targets link or ship, made by Chromium's `tools/licenses/licenses.py credits` over `//chromium_sdk:chromium_sdk`;
 - `LICENSE.chromium-sdk`, this repository's licence;
-- `components.json`, each of those components, its licence, its directory, and whether its corresponding source is published with the version (`copyleft`).
+- `components.json`, each of those components, its licence, its directory, and whether its corresponding source is published with the version (`copyleft`);
+- `gaps/`, the licence texts of the components Chromium's metadata can't credit at the pin, which `chromium/licence-gaps.json` lists, each with its licence, the file whose text ships and why. Packaging fails if Chromium's metadata has any error that list doesn't explain, so a new gap is reviewed before anything ships.
 
 The toolchain is LLVM's, under the Apache License 2.0 with LLVM Exceptions, whose text ships as `toolchain/LICENSE.TXT`. The sysroots' packages' copyright files are in their Debian source, below.
 
@@ -17,7 +18,7 @@ The toolchain is LLVM's, under the Apache License 2.0 with LLVM Exceptions, whos
 
 The release that holds a version's binaries also holds the corresponding source of every component whose licence asks for it, as `source-<name>` assets:
 
-- **Components of the build.** Every component in `components.json` whose licence is a copyleft one (LGPL, GPL, MPL, EPL, CDDL and their like) is archived from the checkout as built, with the SDK's patch applied, and without directories the build never reads, such as Blink's web tests. A Rust crate's archive holds Chromium's directory for it and the vendored source its build names. If Chromium's licence metadata has any error, which would leave a component out of the credits, nothing is published. For the first pin, that is FFmpeg (LGPL 2.1), Blink's WebKit-derived code in `third_party/blink` (LGPL 2 and 2.1), the GTK and Speech Dispatcher headers (LGPL), plasma-wayland-protocols (LGPL 2.1) and the `symphonia` Rust crates (MPL 2.0). The list comes from Chromium's metadata at every build, never from this document, so a new pin's components are covered as they appear.
+- **Components of the build.** Every component in `components.json` whose licence is a copyleft one (LGPL, GPL, MPL, EPL, CDDL and their like) is archived from the checkout as built, with the SDK's patch applied, and without directories the build never reads, such as Blink's web tests. A Rust crate's archive holds Chromium's directory for it and the vendored source its build names. For the first pin, that is FFmpeg (LGPL 2.1), Blink's WebKit-derived code in `third_party/blink` (LGPL 2 and 2.1), the GTK and Speech Dispatcher headers (LGPL), plasma-wayland-protocols (LGPL 2.1) and the `symphonia` Rust crates (MPL 2.0). The list comes from Chromium's metadata at every build, never from this document, so a new pin's components are covered as they appear.
 - **The sysroots.** A Linux SDK ships Chromium's Debian sysroot, which is Debian's packages, among them the GNU C Library (LGPL), GLib (LGPL) and NSS (MPL). `source-debian-bullseye-sysroots` holds the Debian source package (`.dsc` and the files it lists, verified against it) of every package in either Linux sysroot, at the versions in them, from `snapshot.debian.org`'s archive of the date the sysroot was made, and `packages.json`, which lists them.
 - **This repository**, at the commit that built the version, which holds the settings, the patch and the scripts: `source-chromium-sdk`.
 

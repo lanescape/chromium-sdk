@@ -39,6 +39,8 @@ print(json.dumps({"errors": bool(had_errors),
                   "components": [{"name": m["Name"], "license": m.get("License", ""), "dir": m.get("dir", ".")}
                                  for m in metadatas]}))
 '''
+GAP_MISSING = re.compile(r'^Error: missing third party metadata file or licenses\.py SPECIAL_CASES entry in (\S+)$')
+GAP_ERRORS = re.compile(r'^Errors in (\S+)/[^/]+:$')
 # Rust crates: Chromium's metadata sits in third_party/rust/<crate>/<epoch>, and the source it builds is vendored.
 VENDORED = re.compile(r'//third_party/rust/chromium_crates_io/vendor/([^/"]+)/')
 
@@ -46,11 +48,17 @@ VENDORED = re.compile(r'//third_party/rust/chromium_crates_io/vendor/([^/"]+)/')
 def components(src, out):
     """Every third-party component the SDK's targets link or ship: name, licence and directory under src."""
     gn_out = os.path.relpath(out, src)
-    text = subprocess.check_output([sys.executable, '-c', _DISCOVER, gn_out, TARGET], cwd=src, text=True)
-    answer = json.loads(text)
+    result = subprocess.run([sys.executable, '-c', _DISCOVER, gn_out, TARGET], cwd=src, text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    answer = json.loads(result.stdout)
     if answer['errors']:
-        # A component whose metadata Chromium can't read is left out of its credits: never publish without it.
-        raise SystemExit("Chromium's licence metadata has errors (above); no notices or source without them")
+        # A component whose metadata Chromium can't read is left out of its credits. Only the reviewed gaps,
+        # whose notices this repository carries instead, may be.
+        unknown = unexplained(result.stderr, gaps())
+        if unknown:
+            sys.stderr.write(result.stderr)
+            raise SystemExit("Chromium's licence metadata has gaps chromium/licence-gaps.json doesn't explain: " +
+                             ', '.join(unknown))
     found = []
     for entry in answer['components']:
         directory = os.path.relpath(os.path.join(src, entry['dir']), src) if entry['dir'] else '.'
@@ -58,6 +66,23 @@ def components(src, out):
         entry['copyleft'] = bool(COPYLEFT.search(entry['license'])) and directory != '.'
         found.append(entry)
     return found
+
+
+def gaps():
+    entries = json.loads((REPO/'chromium/licence-gaps.json').read_text())
+    return {directory: entry for directory, entry in entries.items() if directory != '_'}
+
+
+def unexplained(diagnostics, known):
+    """The errors in licenses.py's diagnostics that the reviewed gaps don't explain."""
+    unknown = []
+    for line in diagnostics.splitlines():
+        if not line.startswith('Error'):
+            continue
+        match = GAP_MISSING.match(line) or GAP_ERRORS.match(line)
+        if not match or match.group(1) not in known:
+            unknown.append(match.group(1) if match else line)
+    return unknown
 
 
 def notices(src, out, destination):
@@ -70,6 +95,14 @@ def notices(src, out, destination):
                     '--gn-out-dir', os.path.relpath(out, src), str(destination/'CREDITS.html')],
                    cwd=src, check=True)
     listed = components(src, out)
+    # The gaps' licences, whose texts Chromium's credits leave out.
+    for directory, entry in sorted(gaps().items()):
+        if entry['file']:
+            target = destination/'gaps'/slug(directory)
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(src)/entry['file'], target/Path(entry['file']).name)
+        listed.append({'name': directory, 'license': entry['license'] or '', 'dir': directory, 'copyleft': False,
+                       'credited_in': f'gaps/{slug(directory)}' if entry['file'] else None})
     (destination/'components.json').write_text(json.dumps(listed, indent=2, sort_keys=True)+'\n')
     (destination/'README').write_text(
         'Notices for this Chromium SDK version.\n\n'
@@ -78,7 +111,8 @@ def notices(src, out, destination):
         '                      or ship.\n'
         'LICENSE.chromium-sdk  The licence of the scripts that built this version.\n'
         'components.json       Each component, its licence, and whether its corresponding source is published\n'
-        '                      with this version (copyleft: true), as a source-<name> asset of the same release.\n')
+        '                      with this version (copyleft: true), as a source-<name> asset of the same release.\n'
+        'gaps/                 The licences of components Chromium\'s metadata leaves out of CREDITS.html.\n')
     return listed
 
 
@@ -105,19 +139,24 @@ def slug(directory):
 
 
 def source_archives(src, out, output, version):
-    """Archives each copyleft component's directory, as built, beside the parts. Returns the assets written."""
+    """Archives each copyleft component's source, as built, beside the parts: one asset for each set of
+    directories, which components sharing a directory share. Returns the assets written."""
+    groups = {}
+    for component in components(src, out):
+        if component['copyleft']:
+            groups.setdefault(tuple(source_dirs(src, component['dir'])), []).append(component)
     written = []
-    for component in sorted(components(src, out), key=lambda c: c['dir']):
-        if not component['copyleft']:
-            continue
+    for dirs, members in sorted(groups.items()):
         with tempfile.TemporaryDirectory() as tmp:
-            for directory in source_dirs(src, component['dir']):
+            for directory in dirs:
                 shutil.copytree(Path(src)/directory, Path(tmp)/directory, symlinks=True,
                                 ignore=lambda _, names: [n for n in names if n in UNBUILT])
-            asset = Path(output)/f'chromium-sdk-{version}-source-{slug(component["dir"])}.tar.zst'
+            asset = Path(output)/f'chromium-sdk-{version}-source-{slug(dirs[0])}.tar.zst'
             archive.write(tmp, asset)
-        written.append({'name': asset.name, 'part': 'source', 'component': component['name'],
-                        'license': component['license'], 'dir': component['dir'], 'size': asset.stat().st_size})
+        written.append({'name': asset.name, 'part': 'source',
+                        'component': ', '.join(sorted(m['name'] for m in members)),
+                        'license': '; '.join(sorted({m['license'] for m in members})),
+                        'dir': ', '.join(dirs), 'size': asset.stat().st_size})
     return written
 
 

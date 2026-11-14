@@ -74,6 +74,21 @@ class Copyleft(unittest.TestCase):
                               'third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6'])
             self.assertEqual(licences.source_dirs(tmp, 'third_party/ffmpeg'), ['third_party/ffmpeg'])
 
+    def test_only_reviewed_gaps_pass(self):
+        diagnostics = ('Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in '
+                       'third_party/rust\n\nErrors in third_party/crashpad/crashpad/third_party/lss/README.crashpad:\n'
+                       ' License file not found\n')
+        known = licences.gaps()
+        self.assertEqual(licences.unexplained(diagnostics, known), [])
+        self.assertEqual(licences.unexplained(diagnostics.replace('third_party/rust', 'third_party/new'), known),
+                         ['third_party/new'])
+        self.assertEqual(licences.unexplained('Error: something else\n', known), ['Error: something else'])
+
+    def test_reviewed_gaps_are_permissive(self):
+        for directory, entry in licences.gaps().items():
+            self.assertFalse(licences.COPYLEFT.search(entry['license'] or ''), directory)
+            self.assertTrue(entry['why'], directory)
+
     def test_slug(self):
         self.assertEqual(licences.slug('third_party/ffmpeg'), 'third-party-ffmpeg')
         self.assertEqual(licences.slug('third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6'),
