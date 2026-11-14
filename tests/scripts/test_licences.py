@@ -21,6 +21,12 @@ class Debian(unittest.TestCase):
         self.assertEqual(licences.checksums(DSC), [('glibc_2.31.orig.tar.xz', 'aaaa'),
                                                    ('glibc_2.31-13+deb11u6.debian.tar.xz', 'bbbb')])
 
+    def test_a_dsc_must_be_whole(self):
+        signed = DSC + '\n-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----\n'
+        self.assertTrue(licences.complete_dsc(signed))
+        self.assertFalse(licences.complete_dsc(DSC))
+        self.assertFalse(licences.complete_dsc(signed[:len(signed)//2]))
+
     def test_pool_path(self):
         self.assertEqual(licences.pool_path('glibc', '2.31-13+deb11u6'),
                          'pool/main/g/glibc/glibc_2.31-13+deb11u6.dsc')

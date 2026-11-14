@@ -10,6 +10,8 @@ exports between its components, and turns off what can't hold across that bounda
   pin only needs this script run again.
 - `PRESERVE_MOST` in base and V8 stays off, as in a component build: a lazily bound call to an exported function
   would clobber the registers it promises to keep.
+- Components are source sets in the target's toolchain, as each is linked whole into its library in a component
+  build, so the library keeps every export, whether anything in it calls the export or not.
 - Skia, skcms, Abseil, BoringSSL and Perfetto, which choose their exports in GN rather than in a header, export
   as in a component build. V8 has its own argument, `v8_expose_public_symbols` (chromium/args.gn).
 - V8's thread-locals use a model a shared library can hold, as in a component build, rather than the
@@ -61,6 +63,15 @@ GN_EDITS = (
      '  # Export from a non-component build\'s shared libraries what a component build exports between its\n'
      '  # components, for embedders that link Chromium as one shared library (chromium-sdk).\n'
      f'  {ARG} = false\n'),
+    # A non-component build makes components static libraries, from which a link takes only the objects something
+    # refers to, so an export nothing in the library calls would be left out. The SDK's library takes every
+    # component whole, as a component build's libraries do. Only the target's own toolchain: tools the build
+    # runs need no exports.
+    ('build/config/BUILDCONFIG.gn',
+     '  } else if (defined(invoker.static_component_type)) {\n',
+     f'  }} else if ({ARG} && current_toolchain == default_toolchain) {{\n'
+     '    _component_mode = "source_set"\n'
+     '  } else if (defined(invoker.static_component_type)) {\n'),
     ('build/config/BUILD.gn',
      'config("feature_flags") {\n  defines = []\n  rustflags = []\n',
      'config("feature_flags") {\n  defines = []\n  rustflags = []\n'

@@ -24,6 +24,7 @@ There is one configuration per target, Chromium's release build, which embedders
 `chromium/patches/` holds the SDK's one change to Chromium, as one patch for each repository it touches, applied by `patch`. It adds the GN argument `chromium_sdk_exports`, which:
 
 - defines `CHROMIUM_SDK_EXPORTS` for every target, which every export header that keys its `visibility("default")` on `COMPONENT_BUILD` (PartitionAlloc's, on its own `IS_COMPONENT_BUILD` flag) also takes, so a non-component build's shared library exports what a component build's libraries do;
+- builds components as source sets in the target's toolchain, so the library takes each whole, as a component build's libraries do, and keeps every export whether anything in it calls the export or not (a non-component build's static libraries would give the link only the objects something refers to);
 - keeps `PRESERVE_MOST` off in base and V8, as in a component build;
 - gives V8's thread-locals the model a shared library can hold, as in a component build (Blink's heap has an argument of its own for that, `blink_heap_inside_shared_library = true`, among the settings);
 - makes Skia, skcms, Abseil, BoringSSL and Perfetto, which choose their exports in GN, export as in a component build;

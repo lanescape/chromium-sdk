@@ -78,7 +78,7 @@ index 91c1e7703bb..5d2fb7ba2bc 100644
      defines += [ "DCHECK_ALWAYS_ON=1" ]
      rustflags += [ "-Cdebug-assertions" ]
 diff --git a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
-index a8dcb4d4675..b227b246417 100644
+index a8dcb4d4675..4faa3ee2ae4 100644
 --- a/build/config/BUILDCONFIG.gn
 +++ b/build/config/BUILDCONFIG.gn
 @@ -170,6 +170,10 @@ declare_args() {
@@ -92,6 +92,15 @@ index a8dcb4d4675..b227b246417 100644
  }
  
  assert(!(is_debug && is_official_build), "Can't do official debug builds")
+@@ -856,6 +860,8 @@ template("component") {
+       _output_name = string_replace(_output_name, "/", "_")
+       _output_name = string_replace(_output_name, ":", "_")
+     }
++  } else if (chromium_sdk_exports && current_toolchain == default_toolchain) {
++    _component_mode = "source_set"
+   } else if (defined(invoker.static_component_type)) {
+     assert(invoker.static_component_type == "static_library" ||
+            invoker.static_component_type == "source_set")
 diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
 index c106acfca9f..da91022ee53 100644
 --- a/build/config/compiler/BUILD.gn

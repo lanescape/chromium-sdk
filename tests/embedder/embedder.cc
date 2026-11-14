@@ -1,6 +1,7 @@
 // A minimal Content API embedder, built outside Chromium's tree against a packaged SDK (tests/embedder/build.py),
-// that checks the SDK works end to end: it starts Content, loads a page whose script computes a value, reads the
-// value back through JavaScript in an isolated world, and exits 0 if it's right (specs/0003-ci-cd.md, Tests).
+// that checks the SDK works end to end: it starts Content, loads a page whose script computes a value, and the
+// default margin Blink's user-agent style sheet, one of the SDK's resources, gives the page, reads that back
+// through JavaScript in an isolated world, and exits 0 if it's right (specs/0003-ci-cd.md, CI).
 //
 // It implements Content's delegate interfaces in its own binary, so the library calls back across its boundary,
 // and it runs Chromium's renderer and GPU processes from its own executable, sandboxed as Chromium sets up.
@@ -19,6 +20,8 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
@@ -34,23 +37,47 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "tests/embedder/platform.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_scale_factor.h"
+#include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 
 namespace embedder {
 namespace {
 
-// The page computes the value; the embedder only reads it.
+// The page computes the value, and Blink's user-agent style sheet gives the body its margin; the embedder only
+// reads them.
 constexpr char kPage[] =
-    "data:text/html,<title>pending</title><script>document.title = String(6 * 7)</script>";
+    "data:text/html,<title>pending</title><body><script>document.title = String(6 * 7) + ',' + "
+    "getComputedStyle(document.body).marginTop</script></body>";
 constexpr char16_t kRead[] = u"document.title";
-constexpr char kExpected[] = "42";
+constexpr char kExpected[] = "42,8px";
 constexpr base::TimeDelta kTimeout = base::Seconds(90);
 
 int g_result = 1;
+
+// Content and Blink ask for their resources and strings through the embedder's ContentClient, which serves them
+// from the SDK's packs.
+class ContentClient : public content::ContentClient {
+ public:
+  std::u16string GetLocalizedString(int message_id) override { return l10n_util::GetStringUTF16(message_id); }
+  std::string_view GetDataResource(int resource_id, ui::ResourceScaleFactor scale_factor) override {
+    return ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(resource_id, scale_factor);
+  }
+  scoped_refptr<base::RefCountedMemory> GetDataResourceBytes(int resource_id) override {
+    return ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(resource_id);
+  }
+  std::string GetDataResourceString(int resource_id) override {
+    return ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(resource_id);
+  }
+  gfx::Image& GetNativeImageNamed(int resource_id) override {
+    return ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(resource_id);
+  }
+};
 
 class BrowserContext : public content::BrowserContext {
  public:
@@ -132,6 +159,7 @@ class MainParts : public content::BrowserMainParts {
  public:
   int PreMainMessageLoopRun() override {
     context_ = std::make_unique<BrowserContext>();
+    PrepareWindows();
     contents_ = content::WebContents::Create(content::WebContents::CreateParams(context_.get()));
     ShowContents(contents_.get());
     return 0;
@@ -195,12 +223,18 @@ class MainDelegate : public content::ContentMainDelegate {
     return embedder::PreBrowserMain();
   }
 
+  content::ContentClient* CreateContentClient() override {
+    content_client_ = std::make_unique<ContentClient>();
+    return content_client_.get();
+  }
+
   content::ContentBrowserClient* CreateContentBrowserClient() override {
     browser_client_ = std::make_unique<BrowserClient>();
     return browser_client_.get();
   }
 
  private:
+  std::unique_ptr<ContentClient> content_client_;
   std::unique_ptr<BrowserClient> browser_client_;
 };
 

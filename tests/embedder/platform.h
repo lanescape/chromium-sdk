@@ -19,6 +19,8 @@ int EarlyMain(int argc, const char** argv);
 // Switches the browser process adds to its own command line, which its children inherit where they need to.
 void AppendPlatformSwitches(base::CommandLine& command_line);
 std::optional<int> PreBrowserMain();
+// Provides what windows need before any exists, such as Aura's display::Screen.
+void PrepareWindows();
 // Puts the page in a window of its own, so it renders as it would on screen, and takes the window away.
 void ShowContents(content::WebContents* contents);
 void HideContents();

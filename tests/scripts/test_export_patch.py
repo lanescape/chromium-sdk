@@ -83,7 +83,8 @@ class CarriedPatches(unittest.TestCase):
                             'public_deps += [ "//v8:run_mksnapshot_default" ]',
                             'defines += [ "V8_TLS_USED_IN_LIBRARY" ]',
                             'if ((v8_monolithic && v8_monolithic_for_shared_library) ||',
-                            'ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]'):
+                            'ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]',
+                            '_component_mode = "source_set"'):
                     continue
                 self.assertTrue('CHROMIUM_SDK_EXPORTS' in body or 'chromium_sdk_exports' in body,
                                 f'{patch.name}: {line}')

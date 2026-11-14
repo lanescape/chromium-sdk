@@ -7,6 +7,8 @@
 #include "base/command_line.h"
 #include "content/public/browser/web_contents.h"
 #include "tests/embedder/platform.h"
+#include "ui/display/screen.h"
+#include "ui/aura/screen_ozone.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/gfx/geometry/rect.h"
@@ -16,6 +18,8 @@ namespace embedder {
 namespace {
 
 constexpr gfx::Rect kBounds(0, 0, 800, 600);
+// Aura's windows need the process's display::Screen, which on Ozone the embedder provides.
+std::unique_ptr<display::Screen> g_screen;
 std::unique_ptr<aura::WindowTreeHost> g_host;
 
 }  // namespace
@@ -34,6 +38,12 @@ std::optional<int> PreBrowserMain() {
   return std::nullopt;
 }
 
+void PrepareWindows() {
+  if (!display::Screen::HasScreen()) {
+    g_screen = std::make_unique<aura::ScreenOzone>();
+  }
+}
+
 void ShowContents(content::WebContents* contents) {
   g_host = aura::WindowTreeHost::Create(ui::PlatformWindowInitProperties(kBounds));
   g_host->InitHost();
@@ -46,6 +56,7 @@ void ShowContents(content::WebContents* contents) {
 
 void HideContents() {
   g_host.reset();
+  g_screen.reset();
 }
 
 }  // namespace embedder

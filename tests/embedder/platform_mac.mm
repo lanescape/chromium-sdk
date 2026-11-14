@@ -70,6 +70,8 @@ std::optional<int> PreBrowserMain() {
   return std::nullopt;
 }
 
+void PrepareWindows() {}
+
 void ShowContents(content::WebContents*) {}
 
 void HideContents() {}

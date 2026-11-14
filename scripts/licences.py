@@ -170,13 +170,23 @@ def fetch(url, destination, sha=None):
         try:
             with urllib.request.urlopen(url, timeout=300) as stream, open(partial, 'wb') as out:
                 shutil.copyfileobj(stream, out)
+                length = stream.headers.get('Content-Length')
+            if length is not None and partial.stat().st_size != int(length):
+                raise OSError(f'{url} ended early')
             break
         except OSError:
             if attempt == 4:
                 raise
     if sha is not None and sha256(partial) != sha:
         raise SystemExit(f'{url} does not match its .dsc')
+    if sha is None and destination.suffix == '.dsc' and not complete_dsc(partial.read_text(errors='replace')):
+        raise SystemExit(f'{url} is not a whole, signed .dsc')
     os.replace(partial, destination)
+
+
+def complete_dsc(text):
+    """Whether a .dsc is whole: Debian signs every one, so a whole one ends with its signature."""
+    return text.rstrip().endswith('-----END PGP SIGNATURE-----') and 'Checksums-Sha256:' in text
 
 
 def sha256(path):
@@ -209,6 +219,8 @@ def sysroot_sources(src, sysroots, cache, output, version, name):
             directory = stage/source
             directory.mkdir(exist_ok=True)
             dsc = cache/Path(dsc_path).name
+            if dsc.exists() and not complete_dsc(dsc.read_text(errors='replace')):
+                dsc.unlink()
             fetch(base+dsc_path, dsc)
             files = checksums(dsc.read_text(errors='replace'))
             shutil.copy2(dsc, directory/dsc.name)

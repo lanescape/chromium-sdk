@@ -89,19 +89,20 @@ def out_dir(target):
     return checkout_root()/'src/out'/target
 
 
-def stamp(name):
-    """A file that records a finished step for this pin, kept with the checkout."""
-    return stamps_dir()/pin()['commit']/name
-
-
 def gclient_digest():
     return hashlib.sha256((REPO/'chromium/gclient').read_bytes()).hexdigest()[:16]
 
 
 # checkout
 
-def stamps_dir():
-    return checkout_root()/'.chromium-sdk-stamps'
+def checkout_record():
+    """What the checkout was last synced to: the pin and .gclient, written when a sync finishes and removed before
+    anything changes, so it only ever describes a checkout that is whole."""
+    return checkout_root()/'.chromium-sdk-checkout.json'
+
+
+def wanted_checkout():
+    return {'pin': pin(), 'gclient': gclient_digest()}
 
 
 def step_checkout(target, args):
@@ -115,38 +116,38 @@ def step_checkout(target, args):
         run('git', 'clone', '--depth', '1', DEPOT_TOOLS_URL, partial)
         shutil.rmtree(tools, ignore_errors=True)
         partial.rename(tools)
-    wanted = pin()
+    wanted = wanted_checkout()
+    commit = wanted['pin']['commit']
     src = root/'src'
     head = (run('git', '-C', src, 'rev-parse', 'HEAD', capture=True, check=False, quiet=True) or '').strip() \
         if (src/'.git').exists() else ''
-    done = stamp(f'checkout-{gclient_digest()}')
-    # The record says the dependencies were synced for this pin and .gclient; it counts only while src is there.
-    if done.exists() and head == wanted['commit']:
+    record_path = checkout_record()
+    gclient = (REPO/'chromium/gclient').read_text()
+    on_disk = (root/'.gclient').read_text() if (root/'.gclient').exists() else None
+    if record_path.exists() and json.loads(record_path.read_text()) == wanted and head == commit and on_disk == gclient:
         print('checkout: already at the pin, with this .gclient', flush=True)
         return
-    (root/'.gclient').write_text((REPO/'chromium/gclient').read_text())
+    record_path.unlink(missing_ok=True)
+    (root/'.gclient').write_text(gclient)
     if not (src/'.git').exists():
         run('git', 'init', '-q', src)
     if run('git', '-C', src, 'remote', 'get-url', 'origin', check=False, quiet=True) != 0:
         run('git', '-C', src, 'remote', 'add', 'origin', CHROMIUM_URL)
-    if head != wanted['commit']:
-        # Whatever was synced before belongs to another pin, or to none.
-        shutil.rmtree(stamps_dir(), ignore_errors=True)
-        run('git', '-C', src, 'fetch', '--depth=1', 'origin', f'refs/tags/{wanted["tag"]}')
-        fetched = run('git', '-C', src, 'rev-parse', 'FETCH_HEAD', capture=True).strip()
-        if fetched != wanted['commit']:
-            raise SystemExit(f'tag {wanted["tag"]} is {fetched}, not the pinned {wanted["commit"]}')
+    # The tag must name the pinned commit, whatever the checkout holds already.
+    run('git', '-C', src, 'fetch', '--depth=1', 'origin', f'refs/tags/{wanted["pin"]["tag"]}')
+    fetched = run('git', '-C', src, 'rev-parse', 'FETCH_HEAD', capture=True).strip()
+    if fetched != commit:
+        raise SystemExit(f'tag {wanted["pin"]["tag"]} is {fetched}, not the pinned {commit}')
+    if head != commit:
         # Patched files would stop the checkout; they're the pin's own files with the SDK's patch applied.
         unpatch(src)
-        run('git', '-C', src, 'checkout', '-q', '-f', '--detach', wanted['commit'])
+        run('git', '-C', src, 'checkout', '-q', '-f', '--detach', commit)
     # --reset discards what a patch left in a dependency's files when the pin moved; at the same pin there's
     # nothing to discard, and a patched file must keep its time.
-    reset = ['--reset'] if head != wanted['commit'] else []
-    run('gclient', 'sync', '--nohooks', '--no-history', '--force', *reset, '-r', f'src@{wanted["commit"]}',
-        cwd=root)
+    reset = ['--reset'] if head != commit else []
+    run('gclient', 'sync', '--nohooks', '--no-history', '--force', *reset, '-r', f'src@{commit}', cwd=root)
     run('gclient', 'runhooks', cwd=root)
-    done.parent.mkdir(parents=True, exist_ok=True)
-    done.touch()
+    record_path.write_text(json.dumps(wanted)+'\n')
 
 
 # packages
@@ -300,7 +301,10 @@ def record(repo, patch):
     """Keeps a copy of a patch as applied, which reverts it whatever this repository's patches are later."""
     copy = applied_dir()/(f'{repo}.patch' if repo else 'src.patch')
     copy.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(patch, copy)
+    # Whole or not at all: a record a stopped machine cut short would revert only part of what's applied.
+    partial = copy.with_name(copy.name+'.partial')
+    shutil.copyfile(patch, partial)
+    os.replace(partial, copy)
 
 
 # configure
