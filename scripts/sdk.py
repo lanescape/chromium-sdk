@@ -193,7 +193,12 @@ def step_mac_sdk(target, args):
         if args.archive:
             shutil.copyfile(args.archive, archive)
         else:
-            run('gcloud', 'storage', 'cp', f'gs://{entry["bucket"]}/{entry["object"]}', archive)
+            # The bucket is the deployment's, not the repository's: CI names it in a repository variable.
+            bucket = os.environ.get('CHROMIUM_SDK_APPLE_SDK_BUCKET')
+            if not bucket:
+                raise SystemExit('set CHROMIUM_SDK_APPLE_SDK_BUCKET to the private bucket that holds the Apple SDK, '
+                                 'or pass --archive')
+            run('gcloud', 'storage', 'cp', f'gs://{bucket}/{entry["object"]}', archive)
         if sha256(archive) != entry['sha256']:
             raise SystemExit('the Apple SDK archive does not match its pin in targets.json')
         if destination.is_symlink() or destination.is_file():

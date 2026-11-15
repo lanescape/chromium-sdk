@@ -22,6 +22,10 @@ inputs:
     description: macOS only. The service account that provider signs in as
     required: false
     default: ''
+  apple-sdk-bucket:
+    description: macOS only. The private bucket that holds the pinned Apple SDK archive (targets.json)
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -39,6 +43,7 @@ runs:
         TARGET: ${{ inputs.target }}
         CHROMIUM_SDK_CHECKOUT: /work/chromium
         DEPOT_TOOLS: /work/depot_tools
+        CHROMIUM_SDK_APPLE_SDK_BUCKET: ${{ inputs.apple-sdk-bucket }}
       run: |
         set -euo pipefail
         for step in checkout packages mac-sdk patch configure; do

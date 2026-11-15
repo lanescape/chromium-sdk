@@ -48,7 +48,7 @@ There is one configuration per target, Chromium's release build, which embedders
 
 ## macOS
 
-A Linux machine builds macOS with Chromium's clang and `ld64.lld` against Apple's SDK, which Chromium looks for as a hermetic Xcode in `build/mac_files/xcode_binaries`. `targets.json` pins it: the archive's object in the private bucket it comes from and its SHA-256. `mac-sdk` downloads it with the machine's Google Cloud sign-in, checks the digest and installs it there, unless that SDK is installed already. Apple's SDK is only ever on build machines: it is never packaged, published or logged. `configure` names its version for Chromium, and sets `use_system_xcode = false`, `enable_dsyms = false` (nothing on Linux can make dSYMs), and `use_v8_context_snapshot = false` (specs/0001-sdk.md, Runtime files).
+A Linux machine builds macOS with Chromium's clang and `ld64.lld` against Apple's SDK, which Chromium looks for as a hermetic Xcode in `build/mac_files/xcode_binaries`. `targets.json` pins it: the archive's object, in the private bucket that `CHROMIUM_SDK_APPLE_SDK_BUCKET` names (CI's repository variable `APPLE_SDK_BUCKET`), and its SHA-256. `mac-sdk` downloads it with the machine's Google Cloud sign-in, checks the digest and installs it there, unless that SDK is installed already. Apple's SDK is only ever on build machines: it is never packaged, published or logged. `configure` names its version for Chromium, and sets `use_system_xcode = false`, `enable_dsyms = false` (nothing on Linux can make dSYMs), and `use_v8_context_snapshot = false` (specs/0001-sdk.md, Runtime files).
 
 ## Packaging
 
