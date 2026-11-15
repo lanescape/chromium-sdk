@@ -145,6 +145,18 @@ class Environment(unittest.TestCase):
         self.assertEqual(environment['BOTO_CONFIG'], os.devnull)
         self.assertEqual(environment['SWARMING_HEADLESS'], '1')
 
+    def test_the_callers_target_never_reaches_chromiums_tools(self):
+        # build/rust/gni_impl/run_bindgen.py exits if it sees TARGET.
+        saved = os.environ.get('TARGET')
+        os.environ['TARGET'] = 'linux-amd64'
+        try:
+            self.assertNotIn('TARGET', sdk.env())
+        finally:
+            if saved is None:
+                os.environ.pop('TARGET', None)
+            else:
+                os.environ['TARGET'] = saved
+
 
 class DepotTools(unittest.TestCase):
     """depot_tools is cloned when missing, and its bootstrap always finished."""

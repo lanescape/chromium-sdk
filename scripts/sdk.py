@@ -48,6 +48,9 @@ def env():
     # configuration, in place of /etc/boto.cfg and ~/.boto, gives gsutil no
     # credentials of its own.
     environment.update(SWARMING_HEADLESS='1', BOTO_CONFIG=os.devnull)
+    # Chromium's bindgen wrapper refuses to run with TARGET set, as Cargo's tools read it, and the workflows set
+    # it for their own steps.
+    environment.pop('TARGET', None)
     return environment
 
 
