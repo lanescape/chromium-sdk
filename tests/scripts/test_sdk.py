@@ -146,6 +146,83 @@ class Environment(unittest.TestCase):
         self.assertEqual(environment['SWARMING_HEADLESS'], '1')
 
 
+class DepotTools(unittest.TestCase):
+    """depot_tools is cloned when missing, and its bootstrap always finished."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.tools = Path(self.tmp.name)/'depot_tools'
+        self.ran = []
+        self.saved = os.environ.get('DEPOT_TOOLS'), sdk.run
+        os.environ['DEPOT_TOOLS'] = str(self.tools)
+
+        self.broken = None
+        self.where = []
+
+        def run(*command, cwd=None, check=True, **kwargs):
+            self.ran.append([str(part) for part in command])
+            self.where.append(cwd)
+            if command[:2] == ('git', 'clone'):
+                Path(command[-1]).mkdir(parents=True)
+                (Path(command[-1])/'gclient').write_text('')
+            if str(command[0]) == self.broken:
+                if check:
+                    raise subprocess.CalledProcessError(1, command)
+                return 1
+            return 0
+        sdk.run = run
+
+    def tearDown(self):
+        tools, sdk.run = self.saved
+        if tools is None:
+            os.environ.pop('DEPOT_TOOLS', None)
+        else:
+            os.environ['DEPOT_TOOLS'] = tools
+        self.tmp.cleanup()
+
+    def test_a_fresh_clone_is_bootstrapped(self):
+        sdk.ensure_depot_tools()
+        self.assertEqual([command[0] for command in self.ran],
+                         ['git', str(self.tools/'ensure_bootstrap'), str(self.tools/'python-bin/python3'),
+                          str(self.tools/'vpython3')])
+
+    def test_a_kept_clone_is_bootstrapped_again(self):
+        self.tools.mkdir()
+        (self.tools/'gclient').write_text('')
+        (self.tools/'python3_bin_reldir.txt').write_text('bin\n')
+        sdk.ensure_depot_tools()
+        self.assertEqual(self.ran, [[str(self.tools/'ensure_bootstrap')],
+                                    [str(self.tools/'python-bin/python3'), '-c', 'pass'],
+                                    [str(self.tools/'vpython3'), '-c', 'pass']])
+        # vpython3 takes depot_tools' own environment, not one around wherever the step runs.
+        self.assertEqual(self.where[-1], self.tools)
+
+    def test_a_bootstrap_that_left_no_python_fails(self):
+        # ensure_bootstrap exits 0 even when it fetched nothing.
+        for tool in ('python-bin/python3', 'vpython3'):
+            with self.subTest(tool=tool):
+                self.ran, self.broken = [], str(self.tools/tool)
+                with self.assertRaises(subprocess.CalledProcessError):
+                    sdk.ensure_depot_tools()
+
+    def test_the_checkout_bootstraps_before_anything_else(self):
+        calls = []
+        saved = sdk.ensure_depot_tools, sdk.wanted_checkout, sdk.checkout_root
+        sdk.ensure_depot_tools = lambda: calls.append('bootstrap')
+
+        def wanted():
+            calls.append('wanted')
+            raise SystemExit('stop')
+        sdk.wanted_checkout = wanted
+        sdk.checkout_root = lambda: Path(self.tmp.name)/'checkout'
+        try:
+            with self.assertRaises(SystemExit):
+                sdk.step_checkout('linux-amd64', None)
+        finally:
+            sdk.ensure_depot_tools, sdk.wanted_checkout, sdk.checkout_root = saved
+        self.assertEqual(calls, ['bootstrap', 'wanted'])
+
+
 if __name__ == '__main__':
     unittest.main()
 

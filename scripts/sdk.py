@@ -115,9 +115,7 @@ def wanted_checkout():
     return {'pin': pin(), 'gclient': gclient_digest()}
 
 
-def step_checkout(target, args):
-    root = checkout_root()
-    root.mkdir(parents=True, exist_ok=True)
+def ensure_depot_tools():
     tools = depot_tools()
     if not (tools/'gclient').exists():
         # Into a new directory, then renamed, so a clone a stopped machine cut short is never taken for one.
@@ -126,6 +124,23 @@ def step_checkout(target, args):
         run('git', 'clone', '--depth', '1', DEPOT_TOOLS_URL, partial)
         shutil.rmtree(tools, ignore_errors=True)
         partial.rename(tools)
+    # Its tools, gn among them, run on its own Python, which only a bootstrap fetches. gclient would bootstrap it
+    # as it updates depot_tools, which DEPOT_TOOLS_UPDATE=0 stops. ensure_bootstrap fetches only what's missing,
+    # so it runs every time: a bootstrap a stopped machine cut short on a kept disk is finished, and no marker it
+    # writes part-way is taken for a whole one.
+    run(tools/'ensure_bootstrap')
+    # Its exit status doesn't say whether it worked: it waits for its background jobs without checking them, and
+    # ends on commands that always succeed. So what the steps need is run, and fails the step if it can't.
+    # vpython3 is run from depot_tools itself, so it takes depot_tools' own environment, as gclient does, and no
+    # .vpython3 of a directory around it.
+    run(tools/'python-bin/python3', '-c', 'pass')
+    run(tools/'vpython3', '-c', 'pass', cwd=tools)
+
+
+def step_checkout(target, args):
+    root = checkout_root()
+    root.mkdir(parents=True, exist_ok=True)
+    ensure_depot_tools()
     wanted = wanted_checkout()
     commit = wanted['pin']['commit']
     src = root/'src'
