@@ -76,5 +76,62 @@ class Quick(unittest.TestCase):
         self.assertEqual(len(release), 6)
 
 
+class Package(unittest.TestCase):
+    """package() itself, quick and whole, with Chromium's tools and build replaced by a small tree."""
+
+    def run_package(self, version, quick):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            src = tmp/'checkout/src'
+            out = src/'out'/TARGET
+            (out/'libchromium').mkdir(parents=True)
+            (out/'libchromium/resources.pak').write_bytes(b'pak')
+            (out/'args.gn').write_text('is_debug = false\n')
+            for name in ('libchromium.so', 'libffmpeg.so'):
+                (out/name).write_bytes(name.encode())
+            (src/LINUX['sysroot']/'usr').mkdir(parents=True)
+            (src/'base').mkdir()
+            (src/'base/a.h').write_text('// a\n')
+            stripped, levels = [], {}
+
+            def write(directory, asset, level=None):
+                levels[Path(asset).name.split(f'{TARGET}-')[1].split('.')[0]] = level
+                Path(asset).write_bytes(b'archive')
+
+            with mock.patch('sdk.target_entry', return_value=LINUX), mock.patch('sdk.pin', return_value={}), \
+                    mock.patch('sdk.summary'), \
+                    mock.patch.object(package, 'target_variables', return_value={'solibs': ['./libchromium.so']}), \
+                    mock.patch.object(package, 'compile_flags', return_value=([], [], [], [])), \
+                    mock.patch.object(package, 'link_flags', return_value=([], [], [], [])), \
+                    mock.patch.object(package, 'root_headers', return_value=['../../base/a.h']), \
+                    mock.patch.object(package, 'closure', return_value=({'../../base/a.h'}, [])), \
+                    mock.patch.object(package, 'runtime_files', return_value=['libffmpeg.so']), \
+                    mock.patch.object(package, 'strip_libraries',
+                                      lambda libraries, toolchain, system, symbols: stripped.append(
+                                          ([library.name for library in libraries], system, symbols.parent.name))), \
+                    mock.patch.object(package, 'copy_toolchain', return_value={'version': '1', 'revision': ''}), \
+                    mock.patch.object(package.licences, 'notices',
+                                      lambda src, out, notices, version: notices.mkdir(parents=True)), \
+                    mock.patch.object(package.archive, 'write', write):
+                package.package(TARGET, tmp/'checkout', out, version, tmp/'assets', quick=quick)
+            listed = json.loads((tmp/f'assets/assets-{TARGET}.json').read_text())
+            return stripped, levels, listed
+
+    def test_a_release_is_whole(self):
+        stripped, levels, listed = self.run_package('157.0.8103.39-2', quick=False)
+        self.assertEqual(stripped, [(['libchromium.so', 'libffmpeg.so'], 'linux', 'symbols')])
+        self.assertEqual(levels, {part: 19 for part in package.parts_of(LINUX)})
+        self.assertEqual([entry['part'] for entry in listed], package.parts_of(LINUX))
+        self.assertFalse(any('quick' in entry for entry in listed))
+
+    def test_a_quick_package_has_no_symbols_and_says_so(self):
+        stripped, levels, listed = self.run_package('157.0.8103.39-pr1', quick=True)
+        # Stripped and linked the same way, its debug information kept out of the parts.
+        self.assertEqual(stripped, [(['libchromium.so', 'libffmpeg.so'], 'linux', 'debug')])
+        self.assertEqual(levels, {part: package.QUICK_LEVEL for part in package.parts_of(LINUX, quick=True)})
+        self.assertEqual([entry['part'] for entry in listed], package.parts_of(LINUX, quick=True))
+        self.assertTrue(all(entry['quick'] is True for entry in listed))
+
+
 if __name__ == '__main__':
     unittest.main()
