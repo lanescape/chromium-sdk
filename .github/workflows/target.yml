@@ -1,0 +1,114 @@
+name: Target
+
+# One target's chain, build → embedder → test, called once per target by ci.yml and cd.yml after their checks
+# (specs/0003-ci-cd.md). Each job needs the one before, so a failure stops its own target's chain alone, and no
+# machine starts after a failed step.
+#
+# Permissions: the caller's job grants this workflow its token, and a job here can only narrow it. The build and
+# the embedder set none of their own, so they get the caller's grant: `contents: read`, and for macos-arm64 alone
+# also `id-token: write`, to fetch the Apple SDK. GitHub refuses a job here that asks for more than its call grants,
+# so none asks for `id-token` itself: the Linux calls grant none. The test needs only `contents: read`, and says so.
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
+        type: string
+        required: true
+      version:
+        description: CD's version; empty for a pull request, whose version is <Chromium tag>-pr<number>
+        type: string
+        default: ''
+      release:
+        description: true for CD, to also write the corresponding source and keep the assets for publishing
+        type: boolean
+        default: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build ${{ inputs.target }}
+    runs-on: lanescape-80vcpu-linux-amd64-spot
+    steps:
+      - name: Check the job's token
+        if: inputs.target != 'macos-arm64'
+        run: |
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::A Linux target's job must not be able to ask for an OIDC token"
+            exit 1
+          fi
+      - uses: lanescape/actions/disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+        with:
+          family: ${{ inputs.target }}
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - id: version
+        name: Version
+        env:
+          VERSION: ${{ inputs.version }}
+          RELEASE: ${{ inputs.release }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERSION" ]; then
+            echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+          elif [ "$RELEASE" = true ] || [ -z "$NUMBER" ]; then
+            echo "::error::A release needs its version, and only a pull request has one of its own"
+            exit 1
+          else
+            echo "version=$(python3 scripts/version.py pr "$NUMBER")" >>"$GITHUB_OUTPUT"
+          fi
+      # macOS only: its caller grants `id-token: write` for this.
+      - id: apple-sdk
+        if: inputs.target == 'macos-arm64'
+        uses: ./.github/actions/apple-sdk
+      - uses: ./.github/actions/build
+        with:
+          target: ${{ inputs.target }}
+          version: ${{ steps.version.outputs.version }}
+          release: ${{ inputs.release }}
+          apple-sdk-archive: ${{ steps.apple-sdk.outputs.archive }}
+      - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+
+  embedder:
+    name: Embedder ${{ inputs.target }}
+    needs: build
+    runs-on: lanescape-16vcpu-linux-amd64
+    steps:
+      - name: Check the job's token
+        if: inputs.target != 'macos-arm64'
+        run: |
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::A Linux target's job must not be able to ask for an OIDC token"
+            exit 1
+          fi
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      # macOS only: its caller grants `id-token: write` for this, as an embedder brings its own Apple SDK.
+      - id: apple-sdk
+        if: inputs.target == 'macos-arm64'
+        uses: ./.github/actions/apple-sdk
+      - uses: ./.github/actions/embedder
+        with:
+          target: ${{ inputs.target }}
+          apple-sdk-archive: ${{ steps.apple-sdk.outputs.archive }}
+
+  test:
+    name: Test ${{ inputs.target }}
+    needs: embedder
+    # The machine like the target's, as targets.json's test_runner names it (scripts/check.py keeps them the same).
+    runs-on: ${{ fromJSON('{"linux-amd64":"lanescape-16vcpu-linux-amd64","linux-arm64":"lanescape-16vcpu-linux-arm64","macos-arm64":"blacksmith-6vcpu-macos-26"}')[inputs.target] }}
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: embedder-${{ inputs.target }}
+          path: ${{ runner.temp }}
+      - name: Run the test embedder
+        env:
+          TARGET: ${{ inputs.target }}
+        run: tests/embedder/test.sh "$RUNNER_TEMP/embedder-$TARGET.tar"

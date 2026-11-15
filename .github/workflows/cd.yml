@@ -1,9 +1,10 @@
 name: CD
 
 # Every push to main publishes the next version of its Chromium pin as a GitHub release: every target built, tested,
-# and published with its notices and corresponding source (specs/0003-ci-cd.md, CD). One run at a time, each in its
-# turn, in the order they began to wait, and none cancelled, waiting or running, so versions are numbered in the
-# order their commits reached main and every commit gets its own.
+# and published with its notices and corresponding source (specs/0003-ci-cd.md, CD). Each target is its own chain in
+# target.yml, build → embedder → test, which starts once the checks pass, and publishing needs every chain. One run
+# at a time, each in its turn, in the order they began to wait, and none cancelled, waiting or running, so versions
+# are numbered in the order their commits reached main and every commit gets its own.
 
 on:
   push:
@@ -41,108 +42,47 @@ jobs:
     permissions:
       contents: read
 
-  build-linux:
-    name: Build ${{ matrix.target }}
-    needs: version
+  # Each call's job grants its chain's token: `id-token: write` only for macOS, to fetch the Apple SDK.
+  linux-amd64:
+    name: linux-amd64
+    needs: [version, checks]
     if: needs.version.outputs.publish == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [linux-amd64, linux-arm64]
-    runs-on: lanescape-80vcpu-linux-amd64-spot
+    uses: ./.github/workflows/target.yml
     permissions:
       contents: read
-    steps:
-      - uses: lanescape/actions/disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-        with:
-          family: ${{ matrix.target }}
-      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-      - uses: ./.github/actions/build
-        with:
-          target: ${{ matrix.target }}
-          version: ${{ needs.version.outputs.version }}
-          release: 'true'
-      - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
+    with:
+      target: linux-amd64
+      version: ${{ needs.version.outputs.version }}
+      release: true
 
-  build-macos:
-    name: Build macos-arm64
-    needs: version
+  linux-arm64:
+    name: linux-arm64
+    needs: [version, checks]
     if: needs.version.outputs.publish == 'true'
-    runs-on: lanescape-80vcpu-linux-amd64-spot
+    uses: ./.github/workflows/target.yml
+    permissions:
+      contents: read
+    with:
+      target: linux-arm64
+      version: ${{ needs.version.outputs.version }}
+      release: true
+
+  macos-arm64:
+    name: macos-arm64
+    needs: [version, checks]
+    if: needs.version.outputs.publish == 'true'
+    uses: ./.github/workflows/target.yml
     permissions:
       contents: read
       id-token: write
-    steps:
-      - uses: lanescape/actions/disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-        with:
-          family: macos-arm64
-      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-      - uses: ./.github/actions/build
-        with:
-          target: macos-arm64
-          version: ${{ needs.version.outputs.version }}
-          release: 'true'
-      - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-
-  embedder-linux:
-    name: Embedder ${{ matrix.target }}
-    needs: build-linux
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [linux-amd64, linux-arm64]
-    runs-on: lanescape-16vcpu-linux-amd64
-    permissions:
-      contents: read
-    steps:
-      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-      - uses: ./.github/actions/embedder
-        with:
-          target: ${{ matrix.target }}
-
-  embedder-macos:
-    name: Embedder macos-arm64
-    needs: build-macos
-    runs-on: lanescape-16vcpu-linux-amd64
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-      - uses: ./.github/actions/embedder
-        with:
-          target: macos-arm64
-
-  test:
-    name: Test ${{ matrix.target }}
-    needs: [embedder-linux, embedder-macos]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: linux-amd64
-            runner: lanescape-16vcpu-linux-amd64
-          - target: linux-arm64
-            runner: lanescape-16vcpu-linux-arm64
-          - target: macos-arm64
-            runner: blacksmith-12vcpu-macos-26
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-    steps:
-      - uses: lanescape/actions/checkout@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: embedder-${{ matrix.target }}
-          path: ${{ runner.temp }}
-      - name: Run the test embedder
-        env:
-          TARGET: ${{ matrix.target }}
-        run: tests/embedder/test.sh "$RUNNER_TEMP/embedder-$TARGET.tar"
+    with:
+      target: macos-arm64
+      version: ${{ needs.version.outputs.version }}
+      release: true
 
   publish:
     name: Publish
-    needs: [version, checks, test]
+    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]
     runs-on: lanescape-2vcpu-linux-amd64
     permissions:
       contents: write

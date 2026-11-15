@@ -23,6 +23,6 @@
       "xcode": "26.3 (17C529)",
       "sdk": "26.2 (25C58)"
     },
-    "test_runner": "blacksmith-12vcpu-macos-26"
+    "test_runner": "blacksmith-6vcpu-macos-26"
   }
 }

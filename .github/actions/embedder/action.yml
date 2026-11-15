@@ -2,11 +2,15 @@ name: Build the test embedder
 description: >-
   Builds the test embedder against a target's packaged SDK, on a Linux machine with no Chromium checkout, from
   nothing but the package's parts, and hands it to its test machine (specs/0003-ci-cd.md). The job checks out
-  this repository first.
+  this repository first, and for macOS fetches the Apple SDK.
 inputs:
   target:
     description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
     required: true
+  apple-sdk-archive:
+    description: macOS only, the Apple SDK archive that .github/actions/apple-sdk fetched and checked
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -14,15 +18,11 @@ runs:
       with:
         name: sdk-${{ inputs.target }}
         path: ${{ runner.temp }}/package
-    # macOS only: the job has `id-token: write` for this.
-    - id: apple-sdk
-      if: inputs.target == 'macos-arm64'
-      uses: ./.github/actions/apple-sdk
     - name: Build the test embedder against the package
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
-        APPLE_SDK_ARCHIVE: ${{ steps.apple-sdk.outputs.archive }}
+        APPLE_SDK_ARCHIVE: ${{ inputs.apple-sdk-archive }}
       run: |
         set -euo pipefail
         sdk="$RUNNER_TEMP/sdk"
@@ -36,6 +36,10 @@ runs:
         done
         apple=()
         if [ "$TARGET" = macos-arm64 ]; then
+          if [ -z "$APPLE_SDK_ARCHIVE" ]; then
+            echo "::error::The macos-arm64 embedder needs the Apple SDK archive that .github/actions/apple-sdk fetched"
+            exit 1
+          fi
           # The embedder's own Apple SDK, which the SDK never ships.
           python3 scripts/sdk.py mac-sdk "$TARGET" --archive "$APPLE_SDK_ARCHIVE" --destination "$RUNNER_TEMP/xcode"
           apple=(--apple-sdk "$RUNNER_TEMP/xcode/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")

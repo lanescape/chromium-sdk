@@ -6,7 +6,7 @@ self-hosted-runner:
     - lanescape-16vcpu-linux-amd64
     - lanescape-16vcpu-linux-arm64
     - lanescape-80vcpu-linux-amd64-spot
-    - blacksmith-12vcpu-macos-26
+    - blacksmith-6vcpu-macos-26
 paths:
   .github/workflows/cd.yml:
     ignore:

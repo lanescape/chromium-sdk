@@ -2,7 +2,7 @@ name: Build an SDK target
 description: >-
   Builds one target's SDK on a runner-service machine whose work disk, mounted at /work, holds the Chromium build,
   packages it, and hands the package to the embedder's build as an artifact (specs/0003-ci-cd.md). The job asks for
-  the disk and checks out this repository first, and asks to save the disk last.
+  the disk and checks out this repository first, for macOS fetches the Apple SDK, and asks to save the disk last.
 inputs:
   target:
     description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
@@ -14,24 +14,28 @@ inputs:
     description: "'true' to also write the corresponding source, and keep the assets for publishing"
     required: false
     default: 'false'
+  apple-sdk-archive:
+    description: macOS only, the Apple SDK archive that .github/actions/apple-sdk fetched and checked
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
-    # macOS only: the job has `id-token: write` for this.
-    - id: apple-sdk
-      if: inputs.target == 'macos-arm64'
-      uses: ./.github/actions/apple-sdk
     - name: Check out and patch Chromium
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
         LIBCHROMIUM_CHECKOUT: /work/chromium
         DEPOT_TOOLS: /work/depot_tools
-        APPLE_SDK_ARCHIVE: ${{ steps.apple-sdk.outputs.archive }}
+        APPLE_SDK_ARCHIVE: ${{ inputs.apple-sdk-archive }}
       run: |
         set -euo pipefail
         for step in checkout packages mac-sdk patch configure; do
-          if [ "$step" = mac-sdk ] && [ -n "$APPLE_SDK_ARCHIVE" ]; then
+          if [ "$step" = mac-sdk ] && [ "$TARGET" = macos-arm64 ]; then
+            if [ -z "$APPLE_SDK_ARCHIVE" ]; then
+              echo "::error::Building macos-arm64 needs the Apple SDK archive that .github/actions/apple-sdk fetched"
+              exit 1
+            fi
             # The copy the apple-sdk action checked.
             python3 scripts/sdk.py mac-sdk "$TARGET" --archive "$APPLE_SDK_ARCHIVE"
           else

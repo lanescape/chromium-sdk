@@ -1,9 +1,10 @@
 name: Fetch the Apple SDK
 description: >-
   Copies the pinned Apple SDK archive onto the machine from the organization's private bucket for CI tools, and
-  checks its SHA-256 before anything uses it (specs/0002-build.md, macOS). The job needs `id-token: write`: it signs
-  in to Google Cloud with GitHub's OIDC token, through workload identity federation, as a read-only account. Apple's
-  SDK is never published, packaged or logged; the archive stays in the job's temporary directory.
+  checks its SHA-256 before anything uses it (specs/0002-build.md, macOS). Only the macOS build and embedder jobs
+  of .github/workflows/target.yml use it, with `id-token: write`: it signs in to Google Cloud with GitHub's OIDC
+  token, through workload identity federation, as a read-only account. Apple's SDK is never published, packaged
+  or logged; the archive stays in the job's temporary directory.
 outputs:
   archive:
     description: The archive's path on the machine, checked against its SHA-256
