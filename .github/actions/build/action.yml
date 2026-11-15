@@ -11,7 +11,7 @@ inputs:
     description: The version the packages carry
     required: true
   release:
-    description: "'true' to also write the corresponding source"
+    description: "'true' for a release's whole package and its source; 'false' for a pull request's quick one"
     required: false
     default: 'false'
   apple-sdk-archive:
@@ -61,7 +61,13 @@ runs:
         set -euo pipefail
         assets="$RUNNER_TEMP/assets-$TARGET"
         rm -rf "$assets"
-        python3 scripts/sdk.py package "$TARGET" --version "$VERSION" --output "$assets"
+        # A pull request's package goes only to its tests: quicker to compress, and with no symbols. A release's is
+        # whole; package refuses a quick one for any version but a pull request's, and publish.py refuses it too.
+        quick=()
+        if [ "$RELEASE" = false ]; then
+          quick=(--quick)
+        fi
+        python3 scripts/sdk.py package "$TARGET" --version "$VERSION" --output "$assets" "${quick[@]}"
         if [ "$RELEASE" = true ]; then
           # One Linux job also makes the sysroots' Debian sources and this repository's.
           sysroots=()

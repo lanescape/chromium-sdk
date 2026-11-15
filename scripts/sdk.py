@@ -388,7 +388,7 @@ def step_build(target, args):
 
 def step_package(target, args):
     import package
-    package.package(target, checkout_root(), out_dir(target), args.version, Path(args.output))
+    package.package(target, checkout_root(), out_dir(target), args.version, Path(args.output), quick=args.quick)
 
 
 def step_sources(target, args):
@@ -445,6 +445,9 @@ def main(argv=None):
                         "then <destination>/" + APPLE_SDK_IN_XCODE)
     parser.add_argument('--version', help='package: the version the package carries')
     parser.add_argument('--output', help='package, sources: the directory to write assets to')
+    parser.add_argument('--quick', action='store_true',
+                        help="package: CI's package for its tests alone, quicker to compress and with no symbols; "
+                        "only for a pull request's version, which is never published")
     parser.add_argument('--cache', help="sources: where to keep Debian's downloads (default: the system's temp)")
     parser.add_argument('--sysroots', action='store_true',
                         help="sources: also the Linux sysroots' Debian sources and this repository's")

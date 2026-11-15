@@ -6,7 +6,8 @@ from pathlib import Path
 
 # 2000-01-01T00:00:00Z. Every member has this time, so an archive depends only on its files' contents and modes.
 EPOCH = 946684800
-LEVEL = os.environ.get('LIBCHROMIUM_ZSTD_LEVEL', '19')
+# A release's level. Nothing in the environment changes it: CI's quicker packages ask for theirs (package.py).
+LEVEL = 19
 
 
 def members(directory):
@@ -37,7 +38,8 @@ def write(directory, output, level=None):
     """Archives a directory's contents, with paths relative to it, into a zstd-compressed tar."""
     directory = Path(directory)
     output = Path(output)
-    zstd = subprocess.Popen(['zstd', f'-{level or LEVEL}', '-T0', '-q', '-f', '-o', str(output)], stdin=subprocess.PIPE)
+    zstd = subprocess.Popen(['zstd', f'-{level or LEVEL}', '-T0', '-q', '-f', '-o', str(output)],
+                            stdin=subprocess.PIPE)
     try:
         with tarfile.open(fileobj=zstd.stdin, mode='w|', format=tarfile.PAX_FORMAT) as tar:
             for name in members(directory):

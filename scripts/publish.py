@@ -7,6 +7,8 @@
     publish.py release <directory>                                  publishes them and every asset they list
 
 `manifest` checks every asset and fails, naming it, if any is 2 GiB or larger, GitHub's limit for a release asset.
+`manifest` and `release` both fail if any part of any target in targets.json is missing, or if any was packaged
+quickly, as CI's are.
 The manifest and the release notes say where the source is that the release points to rather than copies:
 Chromium's official source tarball for the pin, its checksums, the Chromium tag, and this repository's patch at
 the release's tag and commit (specs/0004-licences.md). `release` checks Chromium's tarball and checksums are
@@ -102,12 +104,33 @@ def source(version, commit, pin, repository):
                       'commit_url': licences.patch_url(commit, repository)}}
 
 
+def targets():
+    return json.loads((Path(__file__).resolve().parent.parent/'targets.json').read_text())
+
+
+def check_parts(described, targets):
+    """A release holds every part of every target in targets.json (package.parts_of()), each packaged for a
+    release: none of CI's quick ones. `described` maps an asset's name to what its job said about it."""
+    import package
+    quick = sorted(name for name, description in described.items() if description.get('quick'))
+    if quick:
+        raise SystemExit(f'packaged quickly, for CI\'s tests alone, and never published: {", ".join(quick)}')
+    have = {(description.get('target'), description.get('part')) for description in described.values()}
+    missing = [f'{target} {part}' for target, entry in sorted(targets.items()) for part in package.parts_of(entry)
+               if (target, part) not in have]
+    if missing:
+        raise SystemExit(f'parts missing: {", ".join(missing)}')
+
+
 def write_manifest(directory, version, commit, pin, described, repository):
     """manifest.json lists every asset in the directory with its size and SHA-256, and where the source is that the
     release points to; SHA256SUMS lists the assets and the manifest. `described` maps an asset's name to what the
     jobs that made it said about it."""
     directory = Path(directory)
     assets = sorted(path for path in directory.iterdir() if path.is_file() and NAME.match(path.name))
+    quick = sorted(name for name, description in described.items() if description.get('quick'))
+    if quick:
+        raise SystemExit(f'packaged quickly, for CI\'s tests alone, and never published: {", ".join(quick)}')
     undescribed = sorted(path.name for path in assets if path.name not in described)
     if undescribed:
         raise SystemExit(f'assets no job described: {", ".join(undescribed)}')
@@ -263,6 +286,7 @@ def release(directory, github):
     directory = Path(directory)
     manifest = json.loads((directory/MANIFEST).read_text())
     check_local(directory, manifest)
+    check_parts({entry['name']: entry for entry in manifest['assets']}, targets())
     # The release points to Chromium's source rather than copying it, so it publishes only once that is there.
     chromium = manifest['source']['chromium']
     for url in (chromium['tarball'], chromium['hashes']):
@@ -331,6 +355,7 @@ def main():
         return 0
     if args.command == 'manifest':
         described = merge_descriptions(sorted(args.directory.glob('assets-*.json')))
+        check_parts(described, targets())
         pin = json.loads((Path(__file__).resolve().parent.parent/'chromium/pin.json').read_text())
         write_manifest(args.directory, args.version, args.commit, pin, described, args.repository)
         print((args.directory/SUMS).read_text(), end='')

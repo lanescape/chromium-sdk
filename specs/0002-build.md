@@ -52,15 +52,21 @@ A Linux machine builds macOS with Chromium's clang and `ld64.lld` against Apple'
 
 ## Packaging
 
-`package --version <v> --output <dir>` writes the target's parts (specs/0001-sdk.md, Parts) and `assets-<target>.json`, which describes them:
+`package --version <v> --output <dir>` writes the target's parts (specs/0001-sdk.md, Parts) and `assets-<target>.json`, which describes them. With `--quick`, for CI's tests alone (Quick packages, below), it writes them faster and without `symbols`:
 
 - **Flags.** The probe's compile and link commands, from Siso's build files, become `sdk.json`'s lists. Paths in them become `{sdk}/include/…` (the source tree), `{sdk}/gen/…`, `{sdk}/sysroot`, `{sdk}/lib/…` or `{apple_sdk}`; any other path stops the packaging, so no build machine's path ships.
-- **Headers.** The roots are the headers of every target the library links whose directory is part of the public surface (`HEADER_ROOTS` in `scripts/package.py`, and every `//services/*/public`), source and generated, and V8's `include/`. Each root is preprocessed alone with the SDK's flags, or, if that fails, after `build/build_config.h`, which some of Chromium's headers use without including, and every file any of them includes ships, from the source tree into `include/` and from the build into `gen/`. A root that doesn't preprocess alone, such as another platform's, is left out, and its count is in `sdk.json`. The set is complete for every root, and holds nothing they don't include, except Chromium's libc++, libc++abi and libc++'s configuration, which ship whole, since an embedder may use any standard header.
-- **Libraries** are copied, their debug information kept in `symbols/` on Linux, and stripped.
+- **Headers.** The roots are the headers of every target the library links whose directory is part of the public surface (`HEADER_ROOTS` in `scripts/package.py`, and every `//services/*/public`), source and generated, and V8's `include/`. Each root is preprocessed alone with the SDK's flags, or, if that fails, after `build/build_config.h`, which some of Chromium's headers use without including, and every file any of them includes ships, from the source tree into `include/` and from the build into `gen/`. A root that doesn't preprocess alone, such as another platform's, is left out, and its count is in `sdk.json`. The list is collected afresh every time: it depends on every header's contents and on which files exist in the source tree and the build's `gen/`, where an earlier build can leave files behind, and no key short of those captures it. The set is complete for every root, and holds nothing they don't include, except Chromium's libc++, libc++abi and libc++'s configuration, which ship whole, since an embedder may use any standard header.
+- **Libraries** are copied, their debug information kept in `symbols/` on Linux, and stripped; the stripped library names its debug information by `.gnu_debuglink`.
 - **Toolchain.** Chromium's clang, `lld` and the LLVM tools an embedder's build uses, clang's own headers, and the target's runtime libraries.
 - **Notices** (specs/0004-licences.md).
 
-Archives are deterministic: entries sorted, times, owners and modes fixed, compressed with zstd at level 19. A part of 2 GiB or more fails the step. `sources` writes the corresponding source (specs/0004-licences.md) and `assets-sources-<target>.json`.
+Archives are deterministic: entries sorted, times, owners and modes fixed, compressed with zstd at level 19, on every core. Nothing in the environment changes a release's level. A part of 2 GiB or more fails the step. `sources` writes the corresponding source (specs/0004-licences.md) and `assets-sources-<target>.json`.
+
+### Quick packages
+
+CI's package goes only to its own embedder and test jobs, is kept a day and is never published (specs/0003-ci-cd.md, CI), so `--quick` makes it faster: zstd level 3 instead of 19, and no `symbols` part, which neither the embedder nor the test uses. Its libraries are still stripped and linked to their debug information by `.gnu_debuglink`, exactly as a release's are, so CI tests the same library; only the debug information itself isn't archived. Level 3, zstd's default, compresses far faster than 19, and smaller than level 1 at no measurable cost, so less to upload and download: a macOS `libchromium.dylib` of 217 MiB becomes 63 MiB at level 19, 79 MiB at level 3 and 90 MiB at level 1.
+
+A quick package never reaches a release. `package` refuses `--quick` for any version but a pull request's, `<tag>-pr<number>`, which is never published; it marks each quick part `"quick": true` in `assets-<target>.json`; and `publish.py`'s `manifest` and `release` each refuse any part so marked, and any version missing any part of any target in `targets.json` (`package.parts_of()`), `symbols` included. `.github/actions/build` asks for `--quick` only when its `release` input is `false`, and `scripts/check.py` requires CD's calls of the chain to pass `release: true` and CI's to pass only their target.
 
 ## By hand
 

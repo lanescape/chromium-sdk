@@ -21,7 +21,7 @@ on:
         type: string
         default: ''
       release:
-        description: true for CD, to also write the corresponding source
+        description: true for CD, for the whole package, as published, and the corresponding source
         type: boolean
         default: false
 

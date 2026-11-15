@@ -16,6 +16,10 @@ import licences
 REPO = Path(__file__).resolve().parent.parent
 SCHEMA = 1
 LIMIT = 2*1024**3
+# CI's packages go only to its next job, are kept a day and are never published: a quicker zstd level, and no
+# symbols part (specs/0003-ci-cd.md, CI). Only a pull request's version, which is never published, may have one.
+QUICK_LEVEL = 3
+QUICK_VERSION = re.compile(r'-pr[0-9]+$')
 
 # Root headers: the headers of every target linked into the library whose directory is one of these. Their
 # closure under the SDK's flags is what ships (headers()).
@@ -283,6 +287,17 @@ def closure(variables, out, roots, language, jobs):
     return found, failed
 
 
+def parts_of(entry, quick=False):
+    """The parts of a target's package, in the order they're made. A quick package, CI's, has no symbols."""
+    names = ['lib']
+    if entry['target_os'] == 'linux' and not quick:
+        names.append('symbols')
+    names += ['headers', 'toolchain']
+    if entry.get('sysroot'):
+        names.append('sysroot')
+    return names + ['notices']
+
+
 # What the library loads at runtime that ships beside it, among GN's runtime dependencies of it: FFmpeg, ANGLE's
 # EGL and GLES libraries, SwiftShader and its Vulkan driver manifest, and the Vulkan loader. Not ANGLE's mock
 # driver or Vulkan's validation layers, which are for testing, nor what the build itself runs.
@@ -316,8 +331,28 @@ def strip(toolchain, path, system):
         subprocess.run([str(toolchain/'bin/llvm-strip'), '--strip-all', str(path)], check=True)
 
 
-def package(target, checkout, out, version, output):
+def strip_libraries(libraries, toolchain, system, symbols):
+    """Strips the libraries. On Linux, each one's debug information is kept first, in the directory `symbols`, and
+    the stripped library names it by `.gnu_debuglink`, its file name and checksum, wherever that directory is."""
+    if system != 'linux':
+        for library in libraries:
+            strip(toolchain, library, system)
+        return
+    symbols.mkdir(parents=True)
+    for library in libraries:
+        debug = symbols/(library.name+'.debug')
+        subprocess.run([str(toolchain/'bin/llvm-objcopy'), '--only-keep-debug', str(library), str(debug)],
+                       check=True)
+        strip(toolchain, library, system)
+        subprocess.run([str(toolchain/'bin/llvm-objcopy'), f'--add-gnu-debuglink={debug}', str(library)],
+                       check=True)
+
+
+def package(target, checkout, out, version, output, quick=False):
     from sdk import target_entry, pin, summary  # noqa: avoids a cycle at import
+    if quick and not QUICK_VERSION.search(version):
+        raise SystemExit(f'{version} is not a pull request\'s version, <tag>-pr<number>: only those, which are never '
+                         'published, may be packaged quickly')
     entry = target_entry(target)
     system = entry['target_os']
     src = checkout/'src'
@@ -378,21 +413,13 @@ def package(target, checkout, out, version, output):
     shutil.copy2(out/'args.gn', lib/'args.gn')
 
     # Debug information, then the stripped libraries.
-    binaries = [relative for relative in runtime_libraries if not relative.endswith('.json')]
+    binaries = [lib/relative for relative in runtime_libraries if not relative.endswith('.json')]
+    symbols = None
     if system == 'linux':
-        symbols = part('symbols')/'symbols'
-        symbols.mkdir()
-        for relative in binaries:
-            library = lib/relative
-            debug = symbols/(library.name+'.debug')
-            subprocess.run([str(toolchain_src/'bin/llvm-objcopy'), '--only-keep-debug', str(library), str(debug)],
-                           check=True)
-            strip(toolchain_src, library, system)
-            subprocess.run([str(toolchain_src/'bin/llvm-objcopy'), f'--add-gnu-debuglink={debug}', str(library)],
-                           check=True)
-    else:
-        for relative in binaries:
-            strip(toolchain_src, lib/relative, system)
+        # A quick package keeps no symbols part, but its libraries are stripped and linked to their debug
+        # information just as a release's are, so CI tests the same library.
+        symbols = (stage/'debug' if quick else part('symbols'))/'symbols'
+    strip_libraries(binaries, toolchain_src, system, symbols)
 
     # libc++'s whole tree, whatever Chromium's headers happen to include: an embedder may use any of it.
     for tree in LIBCXX_TREES:
@@ -443,12 +470,17 @@ def package(target, checkout, out, version, output):
         description['apple_sdk'] = {'built_with': entry['mac_sdk']['sdk'], 'xcode': entry['mac_sdk']['xcode']}
     (lib/'sdk.json').write_text(json.dumps(description, indent=2)+'\n')
 
+    if list(parts) != parts_of(entry, quick):
+        raise SystemExit(f'{target} made the parts {", ".join(parts)}, not {", ".join(parts_of(entry, quick))}')
     written = []
     for name, directory in parts.items():
         asset = output/f'libchromium-{version}-{target}-{name}.tar.zst'
-        archive.write(directory, asset)
+        archive.write(directory, asset, level=QUICK_LEVEL if quick else archive.LEVEL)
         size = asset.stat().st_size
-        written.append({'name': asset.name, 'target': target, 'part': name, 'size': size})
+        listed = {'name': asset.name, 'target': target, 'part': name, 'size': size}
+        if quick:
+            listed['quick'] = True  # publish.py refuses it.
+        written.append(listed)
         summary(f'{asset.name}: {size/1024**2:.0f} MiB')
         if size >= LIMIT:
             raise SystemExit(f'{asset.name} is {size} bytes, at or over the 2 GiB limit for a release asset')

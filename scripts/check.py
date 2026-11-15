@@ -204,6 +204,12 @@ def workflow_problems(repo):
             if name == 'ci.yml' and job.get('if') != FORK_GUARD:
                 found.append(f'.github/workflows/{name}: {job_name} must run only for this repository\'s branches, '
                              f'if: {FORK_GUARD}')
+            # CD's packages are whole, as published; CI's are quick (scripts/package.py), and never published.
+            given = {key: value for key, value in job['with'].items() if key != 'target'}
+            wanted = {'version': '${{ needs.version.outputs.version }}', 'release': 'true'} if name == 'cd.yml' else {}
+            if given != wanted:
+                found.append(f'.github/workflows/{name}: {job_name} must pass '
+                             + (', '.join(f'{key}: {value}' for key, value in wanted.items()) or 'only its target'))
             if name == 'cd.yml' and job.get('if') != PUBLISHES:
                 found.append(f'.github/workflows/{name}: {job_name} must run only if the version job says it publishes')
         if name == 'cd.yml':

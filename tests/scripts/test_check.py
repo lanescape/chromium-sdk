@@ -311,6 +311,20 @@ class WorkflowShape(unittest.TestCase):
                 self.edit(path, old, new)
                 self.assertTrue(any(p.startswith(f'{path}:') and problem in p for p in self.problems()))
 
+    def test_cd_packages_whole_and_ci_quickly(self):
+        for workflow, old, new, problem in (
+                ('cd.yml', '      target: macos-arm64\n      version: ${{ needs.version.outputs.version }}\n'
+                           '      release: true\n',
+                 '      target: macos-arm64\n      version: ${{ needs.version.outputs.version }}\n',
+                 'macos-arm64 must pass version: ${{ needs.version.outputs.version }}, release: true'),
+                ('ci.yml', '      target: linux-arm64\n', '      target: linux-arm64\n      release: true\n',
+                 'linux-arm64 must pass only its target')):
+            with self.subTest(workflow=workflow):
+                self.tearDown()
+                self.setUp()
+                self.edit(f'.github/workflows/{workflow}', old, new)
+                self.assertIn(f'.github/workflows/{workflow}: {problem}', self.problems())
+
 
 if __name__ == '__main__':
     unittest.main()

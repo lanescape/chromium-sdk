@@ -2,8 +2,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.scripts.common import REPO  # noqa: F401
+import package
 import publish
 
 PIN = {'tag': '157.0.8103.39', 'commit': '9'*40}
@@ -196,21 +198,43 @@ class Release(unittest.TestCase):
     def tearDown(self):
         publish.is_public = self.saved
 
-    def prepared(self, tmp):
-        names = ['libchromium-1-linux-amd64-lib.tar.zst']
-        assets(tmp, {name: b'lib' for name in names})
-        publish.write_manifest(tmp, '1', 'c'*40, PIN, {names[0]: {'target': 'linux-amd64', 'part': 'lib'}},
-                               REPOSITORY)
+    def prepared(self, tmp, quick=False, without=None):
+        """Every part of every target, as CD's jobs make them."""
+        described = {f'libchromium-1-{target}-{part}.tar.zst': {'target': target, 'part': part, **({'quick': True}
+                                                                                                    if quick else {})}
+                     for target, entry in publish.targets().items() for part in package.parts_of(entry)
+                     if f'{target}-{part}' != without}
+        assets(tmp, {name: name.encode() for name in described})
+        manifest = publish.write_manifest(tmp, '1', 'c'*40, PIN, {name: {key: value for key, value in entry.items()
+                                                                         if key != 'quick'}
+                                                                  for name, entry in described.items()}, REPOSITORY)
+        if quick:
+            # A manifest made some other way than `manifest`, which refuses a quick part.
+            for entry in manifest['assets']:
+                entry['quick'] = True
+            (tmp/'manifest.json').write_text(publish.json.dumps(manifest))
+        return sorted(described)
+
+    def test_refuses_a_quick_or_partial_release_before_asking_github(self):
+        for case in ({'quick': True}, {'without': 'linux-arm64-symbols'}):
+            with self.subTest(**case), tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                self.prepared(tmp, **case)
+                github = FakeGitHub()
+                # check_local refuses the quick manifest's changed bytes first; this tests the check behind it.
+                with mock.patch.object(publish, 'check_local'), self.assertRaises(SystemExit):
+                    publish.release(tmp, github)
+                self.assertEqual(github.calls, [])
+                self.assertFalse(github.published)
 
     def test_publishes_after_uploading_and_verifying(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            self.prepared(tmp)
+            names = self.prepared(tmp)
             github = FakeGitHub()
             publish.release(tmp, github)
             self.assertTrue(github.published)
-            self.assertEqual(sorted(github.uploaded), ['SHA256SUMS', 'libchromium-1-linux-amd64-lib.tar.zst',
-                                                       'manifest.json'])
+            self.assertEqual(sorted(github.uploaded), sorted(names + ['SHA256SUMS', 'manifest.json']))
             self.assertEqual(github.calls[-2][0], 'PATCH')
             self.assertEqual([url.rsplit('/', 1)[1] for url in self.checked],
                              ['chromium-157.0.8103.39.tar.xz', 'chromium-157.0.8103.39.tar.xz.hashes'])
