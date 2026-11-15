@@ -18,6 +18,59 @@ BUILD_RUNNER = 'lanescape-80vcpu-linux-amd64-spot'
 READ = {'contents': 'read'}
 
 
+KEY_LINE = re.compile(r'( *)(- +)?([A-Za-z0-9_-]+):(?: +(.*))?')
+ITEM_LINE = re.compile(r'( *)- +(.*)')
+QUOTED = re.compile(r'''("(?:[^"\\]|\\.)*"|'(?:[^']|'')*')(\s+#.*)?''')
+FLOW_SEQUENCE = re.compile(r'''\[[^\[\]{}:&*!"'#]*\](\s+#.*)?''')
+
+
+def yaml_subset_problems(path, relative):
+    """The YAML that the workflows and actions are written in, so that the line-based reading below sees exactly what
+    GitHub does: block mappings and sequences, each level indented 2 spaces more than its parent; plain keys followed
+    directly by a colon; values that are plain, quoted on one line, `{}`, a flat flow sequence or a block scalar; and
+    no anchors, aliases, tags, merge keys, flow mappings, directives or documents."""
+    found = []
+    stack, child, block = [0], False, None
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if block is not None:
+            if not line.strip() or len(line) - len(line.lstrip(' ')) > block:
+                continue
+            block = None
+        if not line.strip() or line.lstrip(' ').startswith('#'):
+            continue
+        key, item = KEY_LINE.fullmatch(line), ITEM_LINE.fullmatch(line)
+        if not key and not item:
+            found.append(f'{relative}:{number}: write `key: value`, with a plain key and no space before its colon, '
+                         'or `- item`')
+            continue
+        indent = len((key or item).group(1))
+        if child and indent > stack[-1] - 2:
+            # The parent key's mapping or sequence; a line no further in than the key leaves it null.
+            if indent != stack[-1]:
+                found.append(f'{relative}:{number}: indent a mapping or sequence 2 spaces more than its parent')
+        else:
+            while len(stack) > 1 and stack[-1] > indent:
+                stack.pop()
+            if stack[-1] != indent:
+                found.append(f'{relative}:{number}: indent a mapping or sequence 2 spaces more than its parent')
+        child = False
+        value = (key.group(4) if key else item.group(2)) or ''
+        # The column of a key, which is further in after a sequence's `- `.
+        column = indent + len(key.group(2)) if key and key.group(2) else indent
+        if key and key.group(2):
+            stack.append(column)
+        if key and not value:
+            stack.append(column + 2)
+            child = True
+        elif re.fullmatch(r'[|>][-+]?(\s+#.*)?', value):
+            block = column
+        elif value[0] in '&*!%@`?{[\'"|>-' and value != '{}' and not FLOW_SEQUENCE.fullmatch(value) and \
+                not QUOTED.fullmatch(value):
+            found.append(f'{relative}:{number}: use no anchors, aliases, tags, flow mappings, nested sequences or '
+                         'multi-line quotes')
+    return found
+
+
 def workflow_jobs(path):
     """A workflow's jobs, read from its lines as this repository writes them: each job's own keys, such as `uses`,
     `if` and `runs-on`, its `needs` as a list, its `permissions` (None if it sets none; an inline value other than
@@ -64,6 +117,8 @@ def workflow_problems(repo):
     the checks and failing alone, CD's publish needing every chain, and the OIDC token only where the Apple SDK is
     fetched."""
     found = []
+    for path in sorted((repo/'.github').glob('**/*.yml')):
+        found += yaml_subset_problems(path, path.relative_to(repo).as_posix())
     workflows = repo/'.github/workflows'
     targets = json.loads((repo/'targets.json').read_text())
     workflow = {name: workflow_jobs(workflows/name) for name in ('checks.yml', 'ci.yml', 'cd.yml', 'target.yml')}
@@ -108,14 +163,19 @@ def workflow_problems(repo):
         calls = {job_name: job for job_name, job in jobs.items() if job.get('uses') == TARGET_WORKFLOW}
         if sorted(job['with'].get('target', '') for job in calls.values()) != sorted(targets):
             found.append(f'.github/workflows/{name} must call target.yml once for each target in targets.json')
+        if name == 'ci.yml' and set(jobs) != {'checks', *calls}:
+            found.append('.github/workflows/ci.yml must have no jobs but checks and the calls of target.yml, so that a '
+                         'fork\'s pull request runs only the checks')
         for job_name, job in calls.items():
-            if 'checks' not in job['needs']:
-                found.append(f'.github/workflows/{name}: {job_name} must need checks')
+            # Each chain needs the checks (and in CD the version) and nothing else, so it fails alone.
+            needs = ['checks'] if name == 'ci.yml' else ['checks', 'version']
+            if sorted(job['needs']) != needs:
+                found.append(f'.github/workflows/{name}: {job_name} must need exactly ' + ' and '.join(needs))
             if name == 'ci.yml' and job.get('if') != FORK_GUARD:
                 found.append(f'.github/workflows/{name}: {job_name} must run only for this repository\'s branches, '
                              f'if: {FORK_GUARD}')
-            if name == 'cd.yml' and ('version' not in job['needs'] or job.get('if') != PUBLISHES):
-                found.append(f'.github/workflows/{name}: {job_name} must need version and run only if it publishes')
+            if name == 'cd.yml' and job.get('if') != PUBLISHES:
+                found.append(f'.github/workflows/{name}: {job_name} must run only if the version job says it publishes')
         if name == 'cd.yml':
             publish = jobs.get('publish', {'needs': []})
             if not {'version', 'checks', *calls} <= set(publish['needs']) or 'if' in publish:

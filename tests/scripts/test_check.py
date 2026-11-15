@@ -52,7 +52,7 @@ class WorkflowShape(unittest.TestCase):
     name: macos-arm64
     needs: checks""", """  macos-arm64:
     name: macos-arm64""")
-        self.assertIn('.github/workflows/ci.yml: macos-arm64 must need checks', self.problems())
+        self.assertIn('.github/workflows/ci.yml: macos-arm64 must need exactly checks', self.problems())
 
     def test_ci_chains_skip_forks(self):
         self.edit('.github/workflows/ci.yml', """  linux-amd64:
@@ -187,6 +187,67 @@ class WorkflowShape(unittest.TestCase):
     def test_the_workflows_grant_nothing_by_default(self):
         self.edit('.github/workflows/ci.yml', 'permissions: {}\n', 'permissions: read-all\n')
         self.assertIn('.github/workflows/ci.yml must set `permissions: {}` for the whole workflow', self.problems())
+
+    def test_keys_are_plain_and_followed_by_their_colon(self):
+        for workflow, old, new in (
+                ('cd.yml', '  version:\n', '  "version":\n'),
+                ('cd.yml', '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n',
+                 '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n'
+                 '    "if": ${{ success() || !success() }}\n'),
+                ('target.yml', '      - name: Run the test embedder\n',
+                 '      - name: Run the test embedder\n        continue-on-error : true\n'),
+                ('ci.yml', '      contents: read\n', "      'contents': read\n")):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit(f'.github/workflows/{workflow}', old, new)
+                self.assertTrue(any(f'.github/workflows/{workflow}:' in p and 'plain key' in p
+                                    for p in self.problems()))
+
+    def test_the_yaml_has_no_structure_the_check_cannot_read(self):
+        for workflow, old, new, problem in (
+                ('cd.yml', '  version:\n    name: Version\n', '  version:\n     name: Version\n', 'indent'),
+                ('cd.yml', '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n',
+                 '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n    <<: *publish\n',
+                 'plain key'),
+                ('cd.yml', '    runs-on: lanescape-2vcpu-linux-amd64\n    permissions:\n      contents: write\n',
+                 '    runs-on: lanescape-2vcpu-linux-amd64\n    permissions: { contents: write, id-token: write }\n',
+                 'flow mappings'),
+                ('target.yml', '    name: Test ${{ inputs.target }}\n', '    name: &test Test\n', 'anchors')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit(f'.github/workflows/{workflow}', old, new)
+                self.assertTrue(any(f'.github/workflows/{workflow}:' in p and problem in p for p in self.problems()))
+
+    def test_a_chain_needs_nothing_but_the_checks(self):
+        self.edit('.github/workflows/ci.yml', """  linux-amd64:
+    name: linux-amd64
+    needs: checks""", """  linux-amd64:
+    name: linux-amd64
+    needs: [checks, linux-arm64]""")
+        self.assertIn('.github/workflows/ci.yml: linux-amd64 must need exactly checks', self.problems())
+
+    def test_a_cd_chain_needs_nothing_but_the_checks_and_version(self):
+        self.edit('.github/workflows/cd.yml', """  linux-amd64:
+    name: linux-amd64
+    needs: [version, checks]""", """  linux-amd64:
+    name: linux-amd64
+    needs: [version, checks, macos-arm64]""")
+        self.assertIn('.github/workflows/cd.yml: linux-amd64 must need exactly checks and version', self.problems())
+
+    def test_ci_runs_nothing_else_for_a_fork(self):
+        self.edit('.github/workflows/ci.yml', """jobs:
+""", """jobs:
+  extra:
+    runs-on: lanescape-2vcpu-linux-amd64
+    permissions:
+      contents: read
+    steps:
+      - run: true
+
+""")
+        self.assertTrue(any("ci.yml must have no jobs but checks and the calls" in p for p in self.problems()))
 
 
 if __name__ == '__main__':
