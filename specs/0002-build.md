@@ -48,7 +48,7 @@ There is one configuration per target, Chromium's release build, which embedders
 
 ## macOS
 
-A Linux machine builds macOS with Chromium's clang and `ld64.lld` against Apple's SDK, which Chromium looks for as a hermetic Xcode in `build/mac_files/xcode_binaries`. `targets.json` pins it: the archive's object, in the private bucket that `CHROMIUM_SDK_APPLE_SDK_BUCKET` names (CI's repository variable `APPLE_SDK_BUCKET`), and its SHA-256. `mac-sdk` downloads it with the machine's Google Cloud sign-in, checks the digest and installs it there, unless that SDK is installed already. Apple's SDK is only ever on build machines: it is never packaged, published or logged. `configure` names its version for Chromium, and sets `use_system_xcode = false`, `enable_dsyms = false` (nothing on Linux can make dSYMs), and `use_v8_context_snapshot = false` (specs/0001-sdk.md, Runtime files).
+A Linux machine builds macOS with Chromium's clang and `ld64.lld` against Apple's SDK, which Chromium looks for as a hermetic Xcode in `build/mac_files/xcode_binaries`. `targets.json` pins it: the archive's object in the organization's private bucket for CI tools, `gs://lanescape-ci-tools/macos/sdk/26.2/MacOSX26.2.sdk.tar.zst`, and its SHA-256. The bucket is laid out `<platform>/<tool>/<version>/<file>`, with each file's SHA-256 beside it as `<file>.sha256`, and an object in it never changes: a new SDK is a new path, and so a new pin. `mac-sdk --archive <file>` installs a local copy of the archive there, as CI does with the copy its own steps fetched and checked (specs/0003-ci-cd.md, Credentials); without `--archive`, it copies the object with the machine's own Google Cloud sign-in. Either way it checks the archive's SHA-256 against the pin before it uses it, and does nothing if that SDK is installed already. Apple's SDK is only ever on build machines: it is never packaged, published or logged. `configure` names its version for Chromium, and sets `use_system_xcode = false`, `enable_dsyms = false` (nothing on Linux can make dSYMs), and `use_v8_context_snapshot = false` (specs/0001-sdk.md, Runtime files).
 
 ## Packaging
 
@@ -72,4 +72,4 @@ for step in checkout packages mac-sdk patch configure build; do python3 scripts/
 python3 scripts/sdk.py package linux-amd64 --version 157.0.8103.39-dev --output out
 ```
 
-For macOS, `mac-sdk` needs access to the bucket, or `--archive <a local copy>` of the pinned archive.
+For macOS, `mac-sdk` needs a Google Cloud sign-in that may read the bucket, or `--archive <a local copy>` of the pinned archive.

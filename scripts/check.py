@@ -44,6 +44,21 @@ def problems():
         if sorted(listed) != keyed:
             found.append(f'.github/runners.json: {family} must be keyed by exactly {", ".join(keyed)}')
 
+    # The workflows fetch the Apple SDK that targets.json pins, from the bucket's fixed layout.
+    action = (REPO/'.github/actions/apple-sdk/action.yml').read_text()
+    fetched = {key: re.findall(rf'^\s+{key}:\s*(\S+)\s*$', action, re.M) for key in ('OBJECT', 'SHA256')}
+    pinned = [entry['mac_sdk'] for entry in targets.values() if entry.get('mac_sdk')]
+    if [len(values) for values in fetched.values()] != [1, 1]:
+        found.append('.github/actions/apple-sdk/action.yml must set OBJECT and SHA256 once each')
+    elif {(sdk_pin['object'], sdk_pin['sha256']) for sdk_pin in pinned} != {(fetched['OBJECT'][0],
+                                                                             fetched['SHA256'][0])}:
+        found.append('.github/actions/apple-sdk/action.yml must fetch the Apple SDK targets.json pins')
+    for sdk_pin in pinned:
+        if not re.fullmatch(r'gs://lanescape-ci-tools/macos/sdk/[^/]+/[^/]+', sdk_pin['object']) or \
+                not re.fullmatch(r'[0-9a-f]{64}', sdk_pin['sha256']):
+            found.append('targets.json: mac_sdk must name gs://lanescape-ci-tools/macos/sdk/<version>/<file> '
+                         'and its SHA-256')
+
     for path in sorted((REPO/'.github').glob('**/*.yml')):
         for number, line in enumerate(path.read_text().splitlines(), 1):
             match = USES.match(line)

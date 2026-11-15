@@ -18,7 +18,7 @@
     "target_cpu": "arm64",
     "clang_target": "arm64-apple-macos",
     "mac_sdk": {
-      "object": "sources/mac-sdk/d0e54770d60e077c/MacOSX26.2.sdk.tar.zst",
+      "object": "gs://lanescape-ci-tools/macos/sdk/26.2/MacOSX26.2.sdk.tar.zst",
       "sha256": "d0e54770d60e077c5c55ad66cbbed99a4b06dd9c4ecfc4a66e695dd00c2eab9f",
       "xcode": "26.3 (17C529)",
       "sdk": "26.2 (25C58)"

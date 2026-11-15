@@ -7,18 +7,6 @@ inputs:
   target:
     description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
     required: true
-  apple-sdk-provider:
-    description: macOS only. The workload identity provider that may read the Apple SDK's bucket
-    required: false
-    default: ''
-  apple-sdk-service-account:
-    description: macOS only. The service account that provider signs in as
-    required: false
-    default: ''
-  apple-sdk-bucket:
-    description: macOS only. The private bucket that holds the pinned Apple SDK archive (targets.json)
-    required: false
-    default: ''
 runs:
   using: composite
   steps:
@@ -26,19 +14,15 @@ runs:
       with:
         name: sdk-${{ inputs.target }}
         path: ${{ runner.temp }}/package
-    - name: Sign in to read the Apple SDK
+    # macOS only: the job has `id-token: write` for this.
+    - id: apple-sdk
       if: inputs.target == 'macos-arm64'
-      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
-      with:
-        workload_identity_provider: ${{ inputs.apple-sdk-provider }}
-        service_account: ${{ inputs.apple-sdk-service-account }}
-    - if: inputs.target == 'macos-arm64'
-      uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+      uses: ./.github/actions/apple-sdk
     - name: Build the test embedder against the package
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
-        CHROMIUM_SDK_APPLE_SDK_BUCKET: ${{ inputs.apple-sdk-bucket }}
+        APPLE_SDK_ARCHIVE: ${{ steps.apple-sdk.outputs.archive }}
       run: |
         set -euo pipefail
         sdk="$RUNNER_TEMP/sdk"
@@ -53,7 +37,7 @@ runs:
         apple=()
         if [ "$TARGET" = macos-arm64 ]; then
           # The embedder's own Apple SDK, which the SDK never ships.
-          python3 scripts/sdk.py mac-sdk "$TARGET" --destination "$RUNNER_TEMP/xcode"
+          python3 scripts/sdk.py mac-sdk "$TARGET" --archive "$APPLE_SDK_ARCHIVE" --destination "$RUNNER_TEMP/xcode"
           apple=(--apple-sdk "$RUNNER_TEMP/xcode/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")
         fi
         python3 tests/embedder/build.py --sdk "$sdk" --output "$RUNNER_TEMP/embedder-$TARGET" "${apple[@]}"

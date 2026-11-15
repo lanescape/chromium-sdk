@@ -176,8 +176,9 @@ def step_packages(target, args):
 # mac-sdk
 
 def step_mac_sdk(target, args):
-    """Installs the pinned Apple SDK where Chromium looks for a hermetic Xcode. It comes from a private bucket and
-    is never published or packaged (specs/0002-build.md, macOS)."""
+    """Installs the pinned Apple SDK where Chromium looks for a hermetic Xcode. It comes from the organization's
+    private bucket for CI tools, or a local copy of it (--archive), and is never published or packaged
+    (specs/0002-build.md, macOS)."""
     entry = target_entry(target).get('mac_sdk')
     if not entry:
         print(f'{target} needs no Apple SDK', flush=True)
@@ -191,14 +192,11 @@ def step_mac_sdk(target, args):
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp)/'sdk.tar.zst'
         if args.archive:
+            # CI copies the archive from the bucket and checks it first (.github/actions/apple-sdk).
             shutil.copyfile(args.archive, archive)
         else:
-            # The bucket is the deployment's, not the repository's: CI names it in a repository variable.
-            bucket = os.environ.get('CHROMIUM_SDK_APPLE_SDK_BUCKET')
-            if not bucket:
-                raise SystemExit('set CHROMIUM_SDK_APPLE_SDK_BUCKET to the private bucket that holds the Apple SDK, '
-                                 'or pass --archive')
-            run('gcloud', 'storage', 'cp', f'gs://{bucket}/{entry["object"]}', archive)
+            # The organization's private bucket for CI tools, with the machine's own Google Cloud sign-in.
+            run('gcloud', 'storage', 'cp', entry['object'], archive)
         if sha256(archive) != entry['sha256']:
             raise SystemExit('the Apple SDK archive does not match its pin in targets.json')
         if destination.is_symlink() or destination.is_file():

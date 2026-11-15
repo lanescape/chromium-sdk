@@ -82,9 +82,6 @@ jobs:
           target: macos-arm64
           version: ${{ needs.version.outputs.version }}
           release: 'true'
-          apple-sdk-provider: ${{ vars.APPLE_SDK_WORKLOAD_IDENTITY_PROVIDER }}
-          apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
-          apple-sdk-bucket: ${{ vars.APPLE_SDK_BUCKET }}
       - uses: lanescape/actions/save-disk@5564b7b486d73e407d7f9adcf6723f3f4a8e97b6 # v1
 
   embedder-linux:
@@ -115,9 +112,6 @@ jobs:
       - uses: ./.github/actions/embedder
         with:
           target: macos-arm64
-          apple-sdk-provider: ${{ vars.APPLE_SDK_WORKLOAD_IDENTITY_PROVIDER }}
-          apple-sdk-service-account: ${{ vars.APPLE_SDK_SERVICE_ACCOUNT }}
-          apple-sdk-bucket: ${{ vars.APPLE_SDK_BUCKET }}
 
   test:
     name: Test ${{ matrix.target }}

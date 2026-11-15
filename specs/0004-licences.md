@@ -30,4 +30,4 @@ FFmpeg is a separate shared library, `libffmpeg`, that the library loads at runt
 
 ## Apple's SDK
 
-Apple's SDK is used only on build machines, from a private bucket, under Apple's terms. It is never packaged, published or redistributed, in any asset, artifact or log. A macOS embedder builds with its own.
+Apple's SDK is used only on build machines, from the organization's private bucket for CI tools, under Apple's terms. It is never packaged, published or redistributed, in any asset, artifact or log. A macOS embedder builds with its own.
