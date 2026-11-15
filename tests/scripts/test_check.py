@@ -289,6 +289,28 @@ class WorkflowShape(unittest.TestCase):
         self.assertTrue(any("only target.yml's build and embedder may fetch the Apple SDK" in p
                             for p in self.problems()))
 
+    def test_a_step_s_keys_are_its_own(self):
+        for path, old, new, problem in (
+                ('.github/actions/embedder/action.yml', """        retention-days: 1
+        if-no-files-found: error
+""", """        if-no-files-found: error
+      env:
+        retention-days: 1
+""", 'retention-days: 1'),
+                ('.github/workflows/target.yml', """      - id: apple-sdk
+        if: inputs.target == 'macos-arm64'
+        uses: ./.github/actions/apple-sdk
+      - uses: ./.github/actions/embedder""", """      - id: apple-sdk
+        env:
+          if: inputs.target == 'macos-arm64'
+        uses: ./.github/actions/apple-sdk
+      - uses: ./.github/actions/embedder""", 'only for macos-arm64')):
+            with self.subTest(path=path):
+                self.tearDown()
+                self.setUp()
+                self.edit(path, old, new)
+                self.assertTrue(any(p.startswith(f'{path}:') and problem in p for p in self.problems()))
+
 
 if __name__ == '__main__':
     unittest.main()

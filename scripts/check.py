@@ -83,6 +83,24 @@ def step_lines(lines, index):
     return lines[start:end]
 
 
+def step_keys(step, within=None):
+    """A step's own keys, as `key: value` lines, from step_lines(); or with `within`, the keys directly under that
+    key of the step, such as its `with`."""
+    dash = step[0].index('-')
+    own = [(' ' * (dash + 2) + line[dash + 2:]) if at == 0 else line for at, line in enumerate(step)]
+    keys = [line.strip() for line in own if len(line) - len(line.lstrip(' ')) == dash + 2 and line.strip()]
+    if within is None:
+        return keys
+    found, inside = [], False
+    for line in own:
+        indent = len(line) - len(line.lstrip(' '))
+        if line.strip() and indent <= dash + 2:
+            inside = indent == dash + 2 and line.strip() == f'{within}:'
+        elif inside and indent == dash + 4:
+            found.append(line.strip())
+    return found
+
+
 def workflow_jobs(path):
     """A workflow's jobs, read from its lines as this repository writes them: each job's own keys, such as `uses`,
     `if` and `runs-on`, its `needs` as a list, its `permissions` (None if it sets none; an inline value other than
@@ -231,15 +249,15 @@ def workflow_problems(repo):
             match = USES.match(line)
             if match and match.group(1).startswith('actions/upload-artifact@'):
                 # Artifacts are intermediate and kept a day (specs/0003-ci-cd.md, CI).
-                step = step_lines(lines, number - 1)
-                if [other.strip() for other in step if re.match(r'\s+retention-days:', other)] != ['retention-days: 1']:
+                given = step_keys(step_lines(lines, number - 1), 'with')
+                if [key for key in given if key.startswith('retention-days:')] != ['retention-days: 1']:
                     found.append(f'{relative}:{number}: keep the artifact for 1 day, `retention-days: 1`')
             if match and match.group(1) == './.github/actions/apple-sdk':
                 # In its own step, guarded by its own condition, in a job its call's grant reaches.
                 job = next((heading.group(1) for heading in (re.fullmatch(r'  ([A-Za-z0-9_-]+):\s*', other)
                                                                   for other in reversed(lines[:number-1]))
                             if heading), None)
-                guarded = [other.strip() for other in step_lines(lines, number - 1) if re.match(r'\s+(- +)?if:', other)]
+                guarded = [key for key in step_keys(step_lines(lines, number - 1)) if key.startswith('if:')]
                 if relative != '.github/workflows/target.yml' or job not in ('build', 'embedder') or \
                         guarded != ["if: inputs.target == 'macos-arm64'"]:
                     found.append(f'{relative}:{number}: only target.yml\'s build and embedder may fetch the Apple SDK, '
