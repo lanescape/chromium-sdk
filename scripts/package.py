@@ -412,7 +412,7 @@ def package(target, checkout, out, version, output):
         shutil.copytree(src/entry['sysroot'], part('sysroot')/'sysroot', symlinks=True)
 
     notices = part('notices')/'notices'
-    licences.notices(src, out, notices)
+    licences.notices(src, out, notices, version)
     shutil.copytree(notices, lib/'notices')
 
     description = {

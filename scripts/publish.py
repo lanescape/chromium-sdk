@@ -35,7 +35,6 @@ LIMIT = 2*1024**3
 API = 'https://api.github.com'
 UPLOADS = 'https://uploads.github.com'
 NAME = re.compile(r'^libchromium-[0-9A-Za-z.\-]+\.tar\.zst$')
-PATCHES = 'chromium/patches'
 MANIFEST = 'manifest.json'
 SUMS = 'SHA256SUMS'
 
@@ -99,8 +98,8 @@ def source(version, commit, pin, repository):
     tag = f'v{version}'
     return {'chromium': licences.chromium_source(pin),
             'patch': {'tag': tag, 'commit': commit,
-                      'url': f'https://github.com/{repository}/tree/{tag}/{PATCHES}',
-                      'commit_url': f'https://github.com/{repository}/tree/{commit}/{PATCHES}'}}
+                      'url': licences.patch_url(tag, repository),
+                      'commit_url': licences.patch_url(commit, repository)}}
 
 
 def write_manifest(directory, version, commit, pin, described, repository):

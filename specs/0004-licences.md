@@ -11,7 +11,7 @@ Every target's `notices/` directory, in the `lib` part and as the `notices` part
 - `LICENSE.libchromium`, this repository's licence;
 - `components.json`, each of those components, its licence, its directory, and whether its corresponding source is published with the version (`copyleft`);
 - `gaps/`, the licence texts of the components Chromium's metadata can't credit at the pin, which `chromium/licence-gaps.json` lists, each with its licence, the files whose texts ship and why. Packaging fails if Chromium's metadata has any error that list doesn't explain, so a new gap is reviewed before anything ships;
-- `README`, which says what each of these is, and where Chromium's own source at the pin is (Corresponding source, below).
+- `README`, which says what each of these is, and where Chromium's own source at the pin and this repository's patch at the version's tag are (Corresponding source, below).
 
 The toolchain is LLVM's, under the Apache License 2.0 with LLVM Exceptions, whose text ships as `toolchain/LICENSE.TXT`. The sysroots' packages' copyright files are in their Debian source, below.
 
@@ -28,7 +28,7 @@ The rest of the source, Chromium's own at the pin, which is BSD-licensed, is poi
 - **Chromium**: the pin's tag and commit, and Chromium's official source tarball for the tag, `https://commondatastorage.googleapis.com/chromium-browser-official/chromium-<tag>.tar.xz`, with its checksums file, the same URL with `.hashes` after it. `publish.py release` publishes nothing until both are there.
 - **The patch** this version applies to Chromium: `chromium/patches/` in this repository at the release's tag, and at its commit. The `source-libchromium` asset holds the same, with the scripts.
 
-With the patch and scripts, Chromium's source at the tag rebuilds the version's library (`sdk.py checkout` fetches the same tag from `chromium.googlesource.com`), so a user can rebuild it with Blink's LGPL code, which is inside `libchromium`, changed, as well as replace FFmpeg (below). The notices' `README` points to the tarball and its checksums too, so the pointer travels with the binaries.
+With the patch and scripts, Chromium's source at the tag rebuilds the version's library (`sdk.py checkout` fetches the same tag from `chromium.googlesource.com`), so a user can rebuild it with Blink's LGPL code, which is inside `libchromium`, changed, as well as replace FFmpeg (below). The notices' `README` points to the tarball, its checksums and the patch at the version's tag too, so the pointers travel with the binaries.
 
 ## FFmpeg
 

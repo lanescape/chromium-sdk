@@ -25,6 +25,8 @@ UNBUILT = {'web_tests', 'perf_tests', 'manual_tests', '.git'}
 TARGET = '//libchromium:libchromium'
 # Chromium's official source tarballs, one for each release tag, with a .hashes file beside each.
 CHROMIUM_TARBALLS = 'https://commondatastorage.googleapis.com/chromium-browser-official'
+# Where this repository is published, which its releases and notices name.
+REPOSITORY = 'lanescape/libchromium'
 
 _DISCOVER = r'''
 import argparse, json, sys
@@ -88,9 +90,9 @@ def unexplained(diagnostics, known):
     return unknown
 
 
-def notices(src, out, destination):
-    """Chromium's licence, the credits for everything the build links, this repository's licence, and the list of
-    components with their licences."""
+def notices(src, out, destination, version):
+    """Chromium's licence, the credits for everything the build links, this repository's licence, the list of
+    components with their licences, and where the source is that the release points to."""
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(Path(src)/'LICENSE', destination/'LICENSE.chromium')
     shutil.copy2(REPO/'LICENSE', destination/'LICENSE.libchromium')
@@ -107,20 +109,32 @@ def notices(src, out, destination):
         listed.append({'name': directory, 'license': entry['license'] or '', 'dir': directory, 'copyleft': False,
                        'credited_in': f'gaps/{slug(directory)}' if entry['files'] else None})
     (destination/'components.json').write_text(json.dumps(listed, indent=2, sort_keys=True)+'\n')
-    source = chromium_source(json.loads((REPO/'chromium/pin.json').read_text()))
-    (destination/'README').write_text(
-        'Notices for this libchromium version.\n\n'
-        'LICENSE.chromium     Chromium\'s licence.\n'
-        'CREDITS.html         The licences of every third-party component the SDK\'s library and files link\n'
-        '                     or ship.\n'
-        'LICENSE.libchromium  The licence of the scripts that built this version.\n'
-        'components.json      Each component, its licence, and whether its corresponding source is published\n'
-        '                     with this version (copyleft: true), as a source-<name> asset of the same release.\n'
-        'gaps/                The licences of components Chromium\'s metadata leaves out of CREDITS.html.\n\n'
-        f'Chromium {source["tag"]}\'s own source is Chromium\'s official tarball, {source["tarball"]}, whose\n'
-        f'checksums are {source["hashes"]}. With this repository\'s patch and scripts, the source-libchromium\n'
-        'asset of the same release, it rebuilds the library.\n')
+    (destination/'README').write_text(notices_readme(json.loads((REPO/'chromium/pin.json').read_text()), version))
     return listed
+
+
+def notices_readme(pin, version):
+    """The notices' README: what each file is, and where Chromium's source and the patch are, so the pointers
+    travel with the binaries."""
+    source = chromium_source(pin)
+    return ('Notices for this libchromium version.\n\n'
+            'LICENSE.chromium     Chromium\'s licence.\n'
+            'CREDITS.html         The licences of every third-party component the SDK\'s library and files link\n'
+            '                     or ship.\n'
+            'LICENSE.libchromium  The licence of the scripts that built this version.\n'
+            'components.json      Each component, its licence, and whether its corresponding source is published\n'
+            '                     with this version (copyleft: true), as a source-<name> asset of the same release.\n'
+            'gaps/                The licences of components Chromium\'s metadata leaves out of CREDITS.html.\n\n'
+            f'This version is Chromium {source["tag"]} ({source["commit"]}) with this repository\'s patch.\n'
+            'Chromium\'s source for the tag is its official source tarball, with its checksums:\n'
+            f'  {source["tarball"]}\n  {source["hashes"]}\n'
+            'The patch, which the source-libchromium asset of the same release holds with the scripts that built\n'
+            f'this version:\n  {patch_url(f"v{version}")}\n')
+
+
+def patch_url(ref, repository=REPOSITORY):
+    """This repository's patch to Chromium at a tag or commit."""
+    return f'https://github.com/{repository}/tree/{ref}/chromium/patches'
 
 
 def chromium_source(pin):

@@ -16,6 +16,16 @@ Files:
 """
 
 
+class Readme(unittest.TestCase):
+    def test_points_to_chromium_s_source_and_the_patch(self):
+        text = licences.notices_readme({'tag': '157.0.8103.39', 'commit': '9'*40}, '157.0.8103.39-2')
+        tarball = 'https://commondatastorage.googleapis.com/chromium-browser-official/chromium-157.0.8103.39.tar.xz'
+        for expected in (tarball+'\n', tarball+'.hashes', '9'*40, 'source-libchromium',
+                         'https://github.com/lanescape/libchromium/tree/v157.0.8103.39-2/chromium/patches'):
+            self.assertIn(expected, text)
+        self.assertNotIn('chromium-sdk', text)
+
+
 class Debian(unittest.TestCase):
     def test_checksums(self):
         self.assertEqual(licences.checksums(DSC), [('glibc_2.31.orig.tar.xz', 'aaaa'),
