@@ -37,4 +37,4 @@ python3 scripts/check.py
 
 ## Licences
 
-This repository's own files are under the MIT License (`LICENSE`). The binaries it publishes are Chromium's, under Chromium's licences: each version ships Chromium's `LICENSE`, the credits for every third-party library the build links, and the corresponding source of every component whose licence asks for it, such as FFmpeg's under the LGPL, published from the same place as the binaries.
+This repository's own files are under the MIT License (`LICENSE`). The binaries it publishes are Chromium's, under Chromium's licences: each version ships Chromium's `LICENSE`, the credits for every third-party library the build links, and the corresponding source of every component whose licence asks for it, such as FFmpeg's under the LGPL, published from the same place as the binaries. Each release also points to Chromium's own source for its tag, Chromium's official source tarball and its checksums, and to the patch in this repository at its tag (specs/0004-licences.md).

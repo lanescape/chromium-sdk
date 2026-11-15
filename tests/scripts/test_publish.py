@@ -7,6 +7,7 @@ from tests.scripts.common import REPO  # noqa: F401
 import publish
 
 PIN = {'tag': '157.0.8103.39', 'commit': '9'*40}
+REPOSITORY = 'owner/name'
 
 
 def assets(directory, sizes):
@@ -21,7 +22,7 @@ class Manifest(unittest.TestCase):
             names = ['libchromium-1-linux-amd64-lib.tar.zst', 'libchromium-1-source-libchromium.tar.zst']
             assets(tmp, {name: name.encode() for name in names})
             described = {names[0]: {'target': 'linux-amd64', 'part': 'lib'}, names[1]: {'part': 'source'}}
-            manifest = publish.write_manifest(tmp, '1', 'c'*40, PIN, described)
+            manifest = publish.write_manifest(tmp, '1', 'c'*40, PIN, described, REPOSITORY)
             self.assertEqual([a['name'] for a in manifest['assets']], sorted(names))
             self.assertEqual(manifest['tag'], 'v1')
             sums = (tmp/'SHA256SUMS').read_text().splitlines()
@@ -32,15 +33,32 @@ class Manifest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 publish.check_local(tmp, manifest)
 
+    def test_points_to_chromium_and_the_patch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            assets(tmp, {'libchromium-1-x.tar.zst': b'x'})
+            manifest = publish.write_manifest(tmp, '157.0.8103.39-2', 'c'*40, PIN,
+                                              {'libchromium-1-x.tar.zst': {'target': 'linux-amd64'}}, REPOSITORY)
+            base = 'https://commondatastorage.googleapis.com/chromium-browser-official/chromium-157.0.8103.39.tar.xz'
+            self.assertEqual(manifest['source'], {
+                'chromium': {'tag': '157.0.8103.39', 'commit': '9'*40, 'tarball': base, 'hashes': base+'.hashes'},
+                'patch': {'tag': 'v157.0.8103.39-2', 'commit': 'c'*40,
+                          'url': 'https://github.com/owner/name/tree/v157.0.8103.39-2/chromium/patches',
+                          'commit_url': f'https://github.com/owner/name/tree/{"c"*40}/chromium/patches'}})
+            self.assertEqual(json.loads((tmp/'manifest.json').read_text())['source'], manifest['source'])
+            notes = publish.body(manifest)
+            for text in (base, base+'.hashes', '157.0.8103.39', manifest['source']['patch']['url'], 'c'*40):
+                self.assertIn(text, notes)
+
     def test_undescribed_or_missing_assets_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             assets(tmp, {'libchromium-1-x.tar.zst': b'x'})
             with self.assertRaises(SystemExit):
-                publish.write_manifest(tmp, '1', 'c'*40, PIN, {})
+                publish.write_manifest(tmp, '1', 'c'*40, PIN, {}, REPOSITORY)
             with self.assertRaises(SystemExit):
                 publish.write_manifest(tmp, '1', 'c'*40, PIN, {'libchromium-1-x.tar.zst': {},
-                                                               'libchromium-1-y.tar.zst': {}})
+                                                               'libchromium-1-y.tar.zst': {}}, REPOSITORY)
 
     def test_two_jobs_may_describe_one_asset_the_same_way(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -112,10 +130,20 @@ class FakeGitHub:
 
 
 class Release(unittest.TestCase):
+    def setUp(self):
+        # Chromium's tarball and checksums, which the release points to, are published.
+        self.checked = []
+        self.saved = publish.is_public
+        publish.is_public = lambda url: self.checked.append(url) or True
+
+    def tearDown(self):
+        publish.is_public = self.saved
+
     def prepared(self, tmp):
         names = ['libchromium-1-linux-amd64-lib.tar.zst']
         assets(tmp, {name: b'lib' for name in names})
-        publish.write_manifest(tmp, '1', 'c'*40, PIN, {names[0]: {'target': 'linux-amd64', 'part': 'lib'}})
+        publish.write_manifest(tmp, '1', 'c'*40, PIN, {names[0]: {'target': 'linux-amd64', 'part': 'lib'}},
+                               REPOSITORY)
 
     def test_publishes_after_uploading_and_verifying(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,6 +155,19 @@ class Release(unittest.TestCase):
             self.assertEqual(sorted(github.uploaded), ['SHA256SUMS', 'libchromium-1-linux-amd64-lib.tar.zst',
                                                        'manifest.json'])
             self.assertEqual(github.calls[-2][0], 'PATCH')
+            self.assertEqual([url.rsplit('/', 1)[1] for url in self.checked],
+                             ['chromium-157.0.8103.39.tar.xz', 'chromium-157.0.8103.39.tar.xz.hashes'])
+
+    def test_waits_for_chromium_s_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            self.prepared(tmp)
+            publish.is_public = lambda url: not url.endswith('.hashes')
+            github = FakeGitHub()
+            with self.assertRaises(SystemExit):
+                publish.release(tmp, github)
+            self.assertEqual(github.calls, [])
+            self.assertFalse(github.published)
 
     def test_an_existing_tag_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

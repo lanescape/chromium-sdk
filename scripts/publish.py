@@ -2,11 +2,15 @@
 """Publishes an SDK version as a GitHub release (specs/0003-ci-cd.md, Publishing).
 
     publish.py gather <directory> <job output>...                  merges the jobs' assets into one directory
-    publish.py manifest <directory> --version <v> --commit <sha>   writes manifest.json and SHA256SUMS
+    publish.py manifest <directory> --version <v> --commit <sha> --repository <owner/name>
+                                                                    writes manifest.json and SHA256SUMS
     publish.py release <directory>                                  publishes them and every asset they list
 
 `manifest` checks every asset and fails, naming it, if any is 2 GiB or larger, GitHub's limit for a release asset.
-`release` refuses if the version's tag or a published release for it exists, replaces only a draft a failed run
+The manifest and the release notes say where the source is that the release points to rather than copies:
+Chromium's official source tarball for the pin, its checksums, the Chromium tag, and this repository's patch at
+the release's tag and commit (specs/0004-licences.md). `release` checks Chromium's tarball and checksums are
+published before it publishes anything, and refuses if the version's tag or a published release for it exists, replaces only a draft a failed run
 left, uploads every asset to a new draft, verifies each one's SHA-256 against the manifest, and then publishes the
 draft, which creates the tag last. It never changes or deletes a published release or a tag.
 
@@ -25,10 +29,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import licences
+
 LIMIT = 2*1024**3
 API = 'https://api.github.com'
 UPLOADS = 'https://uploads.github.com'
 NAME = re.compile(r'^libchromium-[0-9A-Za-z.\-]+\.tar\.zst$')
+PATCHES = 'chromium/patches'
 MANIFEST = 'manifest.json'
 SUMS = 'SHA256SUMS'
 
@@ -85,9 +92,21 @@ def merge_descriptions(listings):
     return described
 
 
-def write_manifest(directory, version, commit, pin, described):
-    """manifest.json lists every asset in the directory with its size and SHA-256; SHA256SUMS lists those and the
-    manifest. `described` maps an asset's name to what the jobs that made it said about it."""
+def source(version, commit, pin, repository):
+    """Where the source is that the release points to rather than copies: Chromium's at the pin, as its official
+    tarball with its checksums file, and this repository's patch at the release's tag and commit, which the
+    source-libchromium asset also holds with the scripts."""
+    tag = f'v{version}'
+    return {'chromium': licences.chromium_source(pin),
+            'patch': {'tag': tag, 'commit': commit,
+                      'url': f'https://github.com/{repository}/tree/{tag}/{PATCHES}',
+                      'commit_url': f'https://github.com/{repository}/tree/{commit}/{PATCHES}'}}
+
+
+def write_manifest(directory, version, commit, pin, described, repository):
+    """manifest.json lists every asset in the directory with its size and SHA-256, and where the source is that the
+    release points to; SHA256SUMS lists the assets and the manifest. `described` maps an asset's name to what the
+    jobs that made it said about it."""
     directory = Path(directory)
     assets = sorted(path for path in directory.iterdir() if path.is_file() and NAME.match(path.name))
     undescribed = sorted(path.name for path in assets if path.name not in described)
@@ -105,7 +124,7 @@ def write_manifest(directory, version, commit, pin, described):
         entry.update(name=path.name, size=path.stat().st_size, sha256=sha256(path))
         listed.append(entry)
     manifest = {'schema': 1, 'version': version, 'tag': f'v{version}', 'commit': commit, 'chromium': pin,
-                'assets': listed}
+                'source': source(version, commit, pin, repository), 'assets': listed}
     (directory/MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True)+'\n')
     lines = [f'{entry["sha256"]}  {entry["name"]}' for entry in listed]
     lines.append(f'{sha256(directory/MANIFEST)}  {MANIFEST}')
@@ -205,22 +224,51 @@ class GitHub:
 
 def body(manifest):
     targets = sorted({entry['target'] for entry in manifest['assets'] if entry.get('target')})
+    chromium, patch = manifest['source']['chromium'], manifest['source']['patch']
     lines = [f'Chromium {manifest["chromium"]["tag"]} ({manifest["chromium"]["commit"]}), built by '
              f'{manifest["commit"]}.', '',
              'Each target is a set of parts, which extract into one directory: `lib` (the library, its runtime files, '
              '`sdk.json` and notices), `headers`, `toolchain`, `notices`, and on Linux `sysroot` and `symbols`. '
              '`manifest.json` lists every asset with its SHA-256; `SHA256SUMS` checks them with `sha256sum -c`.', '',
              f'Targets: {", ".join(targets)}.', '',
+             '## Source', '',
              'The `source-*` assets are the corresponding source of every component whose licence asks for it, as '
-             'built, and of the scripts and patch that built this version. Versions are not semver and promise no '
-             'compatibility with each other: pin an exact version.']
+             'built, and `source-libchromium` is this repository at the commit that built this version: the '
+             'settings, the patch and the scripts. The rest of the source is pointed to, and `manifest.json` lists '
+             'the same under `source`:', '',
+             f'- Chromium {chromium["tag"]} (`{chromium["commit"]}`): Chromium\'s official source tarball, '
+             f'{chromium["tarball"]}, and its checksums, {chromium["hashes"]}.',
+             f'- The patch this version applies to it: {patch["url"]} (at `{patch["commit"]}`).', '',
+             'Versions are not semver and promise no compatibility with each other: pin an exact version.']
     return '\n'.join(lines)
+
+
+def is_public(url):
+    """Whether a public URL answers, without credentials: GitHub's token never goes anywhere but GitHub."""
+    request = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'libchromium-publish'})
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.status == 200
+        except urllib.error.HTTPError as error:
+            if error.code < 500:
+                return False
+        except OSError:
+            pass
+        if attempt < 2:
+            time.sleep(10)
+    return False
 
 
 def release(directory, github):
     directory = Path(directory)
     manifest = json.loads((directory/MANIFEST).read_text())
     check_local(directory, manifest)
+    # The release points to Chromium's source rather than copying it, so it publishes only once that is there.
+    chromium = manifest['source']['chromium']
+    for url in (chromium['tarball'], chromium['hashes']):
+        if not is_public(url):
+            raise SystemExit(f'{url} is not published, and the release points to it: rerun once it is')
     tag = manifest['tag']
     if github.tag_exists(tag):
         raise SystemExit(f'{tag} exists already: a version is published once')
@@ -272,6 +320,7 @@ def main():
     make.add_argument('directory', type=Path)
     make.add_argument('--version', required=True)
     make.add_argument('--commit', required=True)
+    make.add_argument('--repository', required=True, help='owner/name, where the patch is published')
     merge = sub.add_parser('gather')
     merge.add_argument('directory', type=Path)
     merge.add_argument('sources', nargs='+', type=Path)
@@ -284,7 +333,7 @@ def main():
     if args.command == 'manifest':
         described = merge_descriptions(sorted(args.directory.glob('assets-*.json')))
         pin = json.loads((Path(__file__).resolve().parent.parent/'chromium/pin.json').read_text())
-        write_manifest(args.directory, args.version, args.commit, pin, described)
+        write_manifest(args.directory, args.version, args.commit, pin, described, args.repository)
         print((args.directory/SUMS).read_text(), end='')
         return 0
     repository = os.environ['GITHUB_REPOSITORY']

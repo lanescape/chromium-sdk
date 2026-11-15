@@ -23,6 +23,8 @@ COPYLEFT = re.compile(r'\b(L?GPL|MPL|EPL|CDDL|CPL|OSL)\b|lgpl|mpl-|gpl-', re.IGN
 # Never inputs to the build: Blink's web tests are most of its directory.
 UNBUILT = {'web_tests', 'perf_tests', 'manual_tests', '.git'}
 TARGET = '//libchromium:libchromium'
+# Chromium's official source tarballs, one for each release tag, with a .hashes file beside each.
+CHROMIUM_TARBALLS = 'https://commondatastorage.googleapis.com/chromium-browser-official'
 
 _DISCOVER = r'''
 import argparse, json, sys
@@ -105,6 +107,7 @@ def notices(src, out, destination):
         listed.append({'name': directory, 'license': entry['license'] or '', 'dir': directory, 'copyleft': False,
                        'credited_in': f'gaps/{slug(directory)}' if entry['files'] else None})
     (destination/'components.json').write_text(json.dumps(listed, indent=2, sort_keys=True)+'\n')
+    source = chromium_source(json.loads((REPO/'chromium/pin.json').read_text()))
     (destination/'README').write_text(
         'Notices for this libchromium version.\n\n'
         'LICENSE.chromium     Chromium\'s licence.\n'
@@ -113,8 +116,18 @@ def notices(src, out, destination):
         'LICENSE.libchromium  The licence of the scripts that built this version.\n'
         'components.json      Each component, its licence, and whether its corresponding source is published\n'
         '                     with this version (copyleft: true), as a source-<name> asset of the same release.\n'
-        'gaps/                The licences of components Chromium\'s metadata leaves out of CREDITS.html.\n')
+        'gaps/                The licences of components Chromium\'s metadata leaves out of CREDITS.html.\n\n'
+        f'Chromium {source["tag"]}\'s own source is Chromium\'s official tarball, {source["tarball"]}, whose\n'
+        f'checksums are {source["hashes"]}. With this repository\'s patch and scripts, the source-libchromium\n'
+        'asset of the same release, it rebuilds the library.\n')
     return listed
+
+
+def chromium_source(pin):
+    """Where Chromium's own source at the pin is: its tag, commit, and Chromium's official source tarball for the
+    tag with its checksums file, which the release points to rather than copies (specs/0004-licences.md)."""
+    tarball = f'{CHROMIUM_TARBALLS}/chromium-{pin["tag"]}.tar.xz'
+    return {'tag': pin['tag'], 'commit': pin['commit'], 'tarball': tarball, 'hashes': f'{tarball}.hashes'}
 
 
 def toolchain_notice(src, destination):
