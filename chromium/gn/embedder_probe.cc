@@ -16,8 +16,13 @@
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
+#include "v8/include/libplatform/libplatform.h"
 
 int main(int argc, const char** argv) {
+  // V8's platform library exports as V8's API does.
+  if (argc < 0) {
+    v8::platform::NewDefaultPlatform();
+  }
   content::ContentMainDelegate delegate;
   content::ContentMainParams params(&delegate);
   params.argc = argc;

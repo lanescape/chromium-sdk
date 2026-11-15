@@ -13,7 +13,8 @@ exports between its components, and turns off what can't hold across that bounda
 - Components are source sets in the target's toolchain, as each is linked whole into its library in a component
   build, so the library keeps every export, whether anything in it calls the export or not.
 - Skia, skcms, Abseil, BoringSSL and Perfetto, which choose their exports in GN rather than in a header, export
-  as in a component build. V8 has its own argument, `v8_expose_public_symbols` (chromium/args.gn).
+  as in a component build, and so do V8's platform and base libraries. V8's own API has its own argument,
+  `v8_expose_public_symbols` (chromium/args.gn).
 - V8's thread-locals use a model a shared library can hold, as in a component build, rather than the
   executable-only local-exec. (Blink's heap has an argument of its own for this, set in chromium/args.gn.)
 - On macOS the allocator shim's operator new and delete stay visible, as in a component build, matching shared
@@ -118,6 +119,13 @@ GN_EDITS = (
      '  config("mac_no_default_new_delete_symbols") {\n    if (!is_component_build) {\n',
      '  config("mac_no_default_new_delete_symbols") {\n'
      f'    if (!is_component_build && !(defined({ARG}) && {ARG})) {{\n'),
+    ('v8/BUILD.gn',
+     '  if (is_component_build) {\n    defines = [ "BUILDING_V8_BASE_SHARED" ]\n',
+     f'  if (is_component_build || (defined({ARG}) && {ARG})) {{\n    defines = [ "BUILDING_V8_BASE_SHARED" ]\n'),
+    ('v8/BUILD.gn',
+     '  if (is_component_build) {\n    defines = [ "BUILDING_V8_PLATFORM_SHARED" ]\n',
+     f'  if (is_component_build || (defined({ARG}) && {ARG})) {{\n'
+     '    defines = [ "BUILDING_V8_PLATFORM_SHARED" ]\n'),
     ('skia/BUILD.gn',
      '  if (is_component_build) {\n    defines += [ "SKIA_DLL" ]\n  }\n',
      f'  if (is_component_build || {ARG}) {{\n    defines += [ "SKIA_DLL" ]\n  }}\n'),

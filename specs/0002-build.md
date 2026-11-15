@@ -27,7 +27,7 @@ There is one configuration per target, Chromium's release build, which embedders
 - builds components as source sets in the target's toolchain, so the library takes each whole, as a component build's libraries do, and keeps every export whether anything in it calls the export or not (a non-component build's static libraries would give the link only the objects something refers to);
 - keeps `PRESERVE_MOST` off in base and V8, as in a component build;
 - gives V8's thread-locals the model a shared library can hold, as in a component build (Blink's heap has an argument of its own for that, `blink_heap_inside_shared_library = true`, among the settings);
-- makes Skia, skcms, Abseil, BoringSSL and Perfetto, which choose their exports in GN, export as in a component build;
+- makes Skia, skcms, Abseil, BoringSSL, Perfetto and V8's platform and base libraries, which choose their exports in GN, export as in a component build;
 - gives macOS's shared libc++ the `@rpath` install name a component build gives every library, and leaves the allocator shim's `operator new` and `delete` visible there, as a component build does, to match shared libc++'s declarations;
 - gives executables and shared libraries the `$ORIGIN` (or `@loader_path`) run path a component build gives them, since libc++ and FFmpeg are shared libraries here and the build runs executables of its own, such as protoc;
 - keeps whole-program vtable optimisation off;

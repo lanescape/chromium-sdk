@@ -112,6 +112,14 @@ class Flags(unittest.TestCase):
         self.assertEqual(argv, ['clang++', '-DA', '-DB="x"', '-I../..', '-Igen', '-std=c++23',
                                 '-isystem../../third_party/libc++/src/include'])
 
+    def test_runtime_files(self):
+        for name in ('./libffmpeg.so', './libEGL.so', './libGLESv2.dylib', './libvk_swiftshader.so',
+                     './libvulkan.so.1', './libvulkan.dylib', './vk_swiftshader_icd.json'):
+            self.assertTrue(package.RUNTIME.match(name), name)
+        for name in ('./libVkICD_mock_icd.so', './libVkLayer_khronos_validation.so', 'angledata/VkICD_mock_icd.json',
+                     'pyproto/google/protobuf/any.py', './libchromium.so'):
+            self.assertFalse(package.RUNTIME.match(name), name)
+
     def test_rewrite_path(self):
         mapping = package.path_mapping(LINUX)
         self.assertEqual(package.rewrite_path('../../base/foo.h', mapping), '{sdk}/include/base/foo.h')

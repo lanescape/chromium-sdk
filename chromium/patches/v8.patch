@@ -1,5 +1,5 @@
 diff --git a/BUILD.gn b/BUILD.gn
-index 8956a3dc357..d13f44226ae 100644
+index 8956a3dc357..fb3b07a4e1a 100644
 --- a/BUILD.gn
 +++ b/BUILD.gn
 @@ -1361,7 +1361,8 @@ config("features") {
@@ -10,6 +10,24 @@ index 8956a3dc357..d13f44226ae 100644
 +  if ((v8_monolithic && v8_monolithic_for_shared_library) ||
 +      (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
      defines += [ "V8_TLS_USED_IN_LIBRARY" ]
+   }
+ 
+@@ -7701,7 +7702,7 @@ v8_component("v8_libbase") {
+ 
+   defines = []
+ 
+-  if (is_component_build) {
++  if (is_component_build || (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
+     defines = [ "BUILDING_V8_BASE_SHARED" ]
+   }
+ 
+@@ -7896,7 +7897,7 @@ v8_component("v8_libplatform") {
+   v8_add_configs += [ "//build/config/compiler:thinlto_optimize_max" ]
+   v8_remove_configs += [ "//build/config/compiler:thinlto_optimize_default" ]
+ 
+-  if (is_component_build) {
++  if (is_component_build || (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
+     defines = [ "BUILDING_V8_PLATFORM_SHARED" ]
    }
  
 diff --git a/include/v8config.h b/include/v8config.h

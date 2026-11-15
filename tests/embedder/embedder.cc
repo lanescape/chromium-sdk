@@ -49,13 +49,16 @@
 namespace embedder {
 namespace {
 
-// The page computes the value, and Blink's user-agent style sheet gives the body its margin; the embedder only
-// reads them.
+// The page computes a value, Blink's user-agent style sheet gives the body its margin, and the GPU process, on
+// SwiftShader, gives the page a WebGL context; the embedder only reads the result.
 constexpr char kPage[] =
-    "data:text/html,<title>pending</title><body><script>document.title = String(6 * 7) + ',' + "
-    "getComputedStyle(document.body).marginTop</script></body>";
+    "data:text/html,<title>pending</title><body><script>"
+    "const gl = document.createElement('canvas').getContext('webgl');"
+    "document.title = [6 * 7, getComputedStyle(document.body).marginTop,"
+    " gl ? gl.getParameter(gl.VERSION).split(' ')[0] : 'no WebGL'].join(',');"
+    "</script></body>";
 constexpr char16_t kRead[] = u"document.title";
-constexpr char kExpected[] = "42,8px";
+constexpr char kExpected[] = "42,8px,WebGL";
 constexpr base::TimeDelta kTimeout = base::Seconds(90);
 
 int g_result = 1;
@@ -203,7 +206,13 @@ class BrowserClient : public content::ContentBrowserClient {
 class MainDelegate : public content::ContentMainDelegate {
  public:
   std::optional<int> BasicStartupComplete() override {
-    AppendPlatformSwitches(*base::CommandLine::ForCurrentProcess());
+    base::CommandLine& command_line = *base::CommandLine::ForCurrentProcess();
+    // The GPU process renders with SwiftShader, which every machine has, through ANGLE: the SDK's GPU runtime
+    // files are what it loads.
+    command_line.AppendSwitchASCII("use-gl", "angle");
+    command_line.AppendSwitchASCII("use-angle", "swiftshader");
+    command_line.AppendSwitch("enable-unsafe-swiftshader");
+    AppendPlatformSwitches(command_line);
     return std::nullopt;
   }
 

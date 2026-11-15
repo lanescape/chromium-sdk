@@ -283,6 +283,24 @@ def closure(variables, out, roots, language, jobs):
     return found, failed
 
 
+# What the library loads at runtime that ships beside it, among GN's runtime dependencies of it: FFmpeg, ANGLE's
+# EGL and GLES libraries, SwiftShader and its Vulkan driver manifest, and the Vulkan loader. Not ANGLE's mock
+# driver or Vulkan's validation layers, which are for testing, nor what the build itself runs.
+RUNTIME = re.compile(r'^\./(lib(ffmpeg|EGL|GLESv2|vk_swiftshader)\.(so|dylib)|libvulkan\.(so\.1|dylib)|'
+                     r'vk_swiftshader_icd\.json)$')
+
+
+def runtime_files(src, out):
+    """The library's runtime dependencies that ship in lib/, by their names in the build directory."""
+    import sdk
+    listed = subprocess.check_output([str(sdk.depot_tools()/'gn'), 'desc', str(out), '//chromium_sdk:chromium',
+                                      'runtime_deps'], cwd=src, text=True, env=sdk.env()).split()
+    names = sorted({name[2:] for name in listed if RUNTIME.match(name if name.startswith('./') else './'+name)})
+    if not any(name.startswith('libffmpeg') for name in names):
+        raise SystemExit('the library no longer lists FFmpeg among its runtime dependencies')
+    return names
+
+
 def strip(toolchain, path, system):
     if system == 'mac':
         # Without local symbols. llvm-strip signs ad hoc again what it strips.
@@ -338,8 +356,9 @@ def package(target, checkout, out, version, output):
     lib = part('lib')
     (lib/'lib').mkdir()
     runtime_libraries = []
-    # What the probe links, and FFmpeg, which the library loads.
-    names = [solib[2:] for solib in variables.get('solibs', [])] + [f'libffmpeg{suffix}']
+    # What the probe links, and what the library loads at runtime, from GN's own list (runtime_files()).
+    names = [solib[2:] for solib in variables.get('solibs', [])]
+    names += [name for name in runtime_files(src, out) if name not in names]
     for name in names:
         shutil.copy2(out/name, lib/'lib'/name)
         runtime_libraries.append(f'lib/{name}')
@@ -352,10 +371,11 @@ def package(target, checkout, out, version, output):
     shutil.copy2(out/'args.gn', lib/'args.gn')
 
     # Debug information, then the stripped libraries.
+    binaries = [relative for relative in runtime_libraries if not relative.endswith('.json')]
     if system == 'linux':
         symbols = part('symbols')/'symbols'
         symbols.mkdir()
-        for relative in runtime_libraries:
+        for relative in binaries:
             library = lib/relative
             debug = symbols/(library.name+'.debug')
             subprocess.run([str(toolchain_src/'bin/llvm-objcopy'), '--only-keep-debug', str(library), str(debug)],
@@ -364,7 +384,7 @@ def package(target, checkout, out, version, output):
             subprocess.run([str(toolchain_src/'bin/llvm-objcopy'), f'--add-gnu-debuglink={debug}', str(library)],
                            check=True)
     else:
-        for relative in runtime_libraries:
+        for relative in binaries:
             strip(toolchain_src, lib/relative, system)
 
     # libc++'s whole tree, whatever Chromium's headers happen to include: an embedder may use any of it.
