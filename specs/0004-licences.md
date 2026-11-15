@@ -10,7 +10,7 @@ Every target's `notices/` directory, in the `lib` part and as the `notices` part
 - `CREDITS.html`, the licences of every third-party component the SDK's targets link or ship, made by Chromium's `tools/licenses/licenses.py credits` over `//chromium_sdk:chromium_sdk`;
 - `LICENSE.chromium-sdk`, this repository's licence;
 - `components.json`, each of those components, its licence, its directory, and whether its corresponding source is published with the version (`copyleft`);
-- `gaps/`, the licence texts of the components Chromium's metadata can't credit at the pin, which `chromium/licence-gaps.json` lists, each with its licence, the file whose text ships and why. Packaging fails if Chromium's metadata has any error that list doesn't explain, so a new gap is reviewed before anything ships.
+- `gaps/`, the licence texts of the components Chromium's metadata can't credit at the pin, which `chromium/licence-gaps.json` lists, each with its licence, the files whose texts ship and why. Packaging fails if Chromium's metadata has any error that list doesn't explain, so a new gap is reviewed before anything ships.
 
 The toolchain is LLVM's, under the Apache License 2.0 with LLVM Exceptions, whose text ships as `toolchain/LICENSE.TXT`. The sysroots' packages' copyright files are in their Debian source, below.
 

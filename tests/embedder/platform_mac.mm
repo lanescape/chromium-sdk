@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 
+#include <memory>
 #include <optional>
 
 #include "base/command_line.h"
@@ -16,6 +17,7 @@
 #include "content/public/browser/web_contents.h"
 #include "sandbox/mac/seatbelt_exec.h"
 #include "tests/embedder/platform.h"
+#include "ui/display/screen.h"
 
 @interface EmbedderApplication : NSApplication <CrAppProtocol, CrAppControlProtocol, NativeEventProcessor>
 @end
@@ -50,6 +52,12 @@
 @end
 
 namespace embedder {
+namespace {
+
+// Content's views need the process's display::Screen, which the embedder provides.
+std::unique_ptr<display::ScopedNativeScreen> g_screen;
+
+}  // namespace
 
 int EarlyMain(int argc, const char** argv) {
   // A sandboxed child enters the sandbox its parent prepared before anything else runs.
@@ -70,10 +78,14 @@ std::optional<int> PreBrowserMain() {
   return std::nullopt;
 }
 
-void PrepareWindows() {}
+void PrepareWindows() {
+  g_screen = std::make_unique<display::ScopedNativeScreen>();
+}
 
 void ShowContents(content::WebContents*) {}
 
-void HideContents() {}
+void HideContents() {
+  g_screen.reset();
+}
 
 }  // namespace embedder

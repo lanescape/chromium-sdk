@@ -98,12 +98,12 @@ def notices(src, out, destination):
     listed = components(src, out)
     # The gaps' licences, whose texts Chromium's credits leave out.
     for directory, entry in sorted(gaps().items()):
-        if entry['file']:
-            target = destination/'gaps'/slug(directory)
+        target = destination/'gaps'/slug(directory)
+        for number, name in enumerate(entry['files']):
             target.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(Path(src)/entry['file'], target/Path(entry['file']).name)
+            shutil.copy2(Path(src)/name, target/f'{number+1}-{slug(name)}')
         listed.append({'name': directory, 'license': entry['license'] or '', 'dir': directory, 'copyleft': False,
-                       'credited_in': f'gaps/{slug(directory)}' if entry['file'] else None})
+                       'credited_in': f'gaps/{slug(directory)}' if entry['files'] else None})
     (destination/'components.json').write_text(json.dumps(listed, indent=2, sort_keys=True)+'\n')
     (destination/'README').write_text(
         'Notices for this Chromium SDK version.\n\n'
