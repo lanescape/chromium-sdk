@@ -111,6 +111,14 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # Every target's package, or nothing: artifacts are kept a day, so a rerun of this job alone a day later
+          # finds some or none of them, and must not publish fewer targets.
+          for target in $(jq -r 'keys[]' targets.json); do
+            if [ ! -d "$RUNNER_TEMP/jobs/sdk-$target" ]; then
+              echo "::error::sdk-$target is missing, perhaps expired after a day: rerun the whole run to rebuild it"
+              exit 1
+            fi
+          done
           release="$RUNNER_TEMP/release"
           python3 scripts/publish.py gather "$release" "$RUNNER_TEMP"/jobs/*
           python3 scripts/publish.py manifest "$release" --version "$VERSION" --commit "$COMMIT" \

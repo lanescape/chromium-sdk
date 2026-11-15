@@ -71,6 +71,18 @@ def yaml_subset_problems(path, relative):
     return found
 
 
+def step_lines(lines, index):
+    """The lines of the sequence item, such as a step, that holds lines[index]: from its `- ` up to the next item or
+    the end of its sequence."""
+    column = len(lines[index]) - len(lines[index].lstrip(' -'))
+    start = next(at for at in range(index, -1, -1)
+                 if re.match(r' *- ', lines[at]) and lines[at].index('-') < column)
+    dash = lines[start].index('-')
+    end = next((at for at in range(start + 1, len(lines))
+                if lines[at].strip() and len(lines[at]) - len(lines[at].lstrip(' ')) <= dash), len(lines))
+    return lines[start:end]
+
+
 def workflow_jobs(path):
     """A workflow's jobs, read from its lines as this repository writes them: each job's own keys, such as `uses`,
     `if` and `runs-on`, its `needs` as a list, its `permissions` (None if it sets none; an inline value other than
@@ -217,6 +229,11 @@ def workflow_problems(repo):
                 found.append(f'{relative}:{number}: only ci.yml\'s and cd.yml\'s macOS calls of target.yml may grant '
                              'id-token')
             match = USES.match(line)
+            if match and match.group(1).startswith('actions/upload-artifact@'):
+                # Artifacts are intermediate and kept a day (specs/0003-ci-cd.md, CI).
+                step = step_lines(lines, number - 1)
+                if [other.strip() for other in step if re.match(r'\s+retention-days:', other)] != ['retention-days: 1']:
+                    found.append(f'{relative}:{number}: keep the artifact for 1 day, `retention-days: 1`')
             if match and match.group(1) == './.github/actions/apple-sdk':
                 step = lines[max(0, number-3):number-1]
                 if relative != '.github/workflows/target.yml' or \

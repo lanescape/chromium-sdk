@@ -249,6 +249,25 @@ class WorkflowShape(unittest.TestCase):
 """)
         self.assertTrue(any("ci.yml must have no jobs but checks and the calls" in p for p in self.problems()))
 
+    def test_artifacts_are_kept_a_day(self):
+        for path, old, new in (
+                ('.github/actions/build/action.yml', '        retention-days: 1\n', '        retention-days: 7\n'),
+                ('.github/actions/embedder/action.yml', '        retention-days: 1\n', ''),
+                ('.github/workflows/target.yml', """      - name: Run the test embedder
+""", """      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: log-${{ inputs.target }}
+          path: log
+      - name: Run the test embedder
+        env:
+          RETENTION: 1
+""")):
+            with self.subTest(path=path):
+                self.tearDown()
+                self.setUp()
+                self.edit(path, old, new)
+                self.assertTrue(any(p.startswith(f'{path}:') and 'retention-days: 1' in p for p in self.problems()))
+
 
 if __name__ == '__main__':
     unittest.main()

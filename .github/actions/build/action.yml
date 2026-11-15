@@ -11,7 +11,7 @@ inputs:
     description: The version the packages carry
     required: true
   release:
-    description: "'true' to also write the corresponding source, and keep the assets for publishing"
+    description: "'true' to also write the corresponding source"
     required: false
     default: 'false'
   apple-sdk-archive:
@@ -74,6 +74,6 @@ runs:
       with:
         name: sdk-${{ inputs.target }}
         path: ${{ runner.temp }}/assets-${{ inputs.target }}
-        retention-days: ${{ inputs.release == 'true' && 7 || 3 }}
+        retention-days: 1
         compression-level: 0
         if-no-files-found: error
