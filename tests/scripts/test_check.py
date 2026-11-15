@@ -44,7 +44,8 @@ class WorkflowShape(unittest.TestCase):
       id-token: write
     with:
       target: linux-arm64""")
-                self.assertTrue(any('linux-arm64 must grant exactly contents: read' in p for p in self.problems()))
+                self.assertIn(f'.github/workflows/{workflow}: linux-arm64 must have exactly contents: read',
+                              self.problems())
 
     def test_every_chain_needs_the_checks(self):
         self.edit('.github/workflows/ci.yml', """  macos-arm64:
@@ -72,8 +73,8 @@ class WorkflowShape(unittest.TestCase):
     def test_publish_needs_every_chain(self):
         self.edit('.github/workflows/cd.yml', 'needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]',
                   'needs: [version, checks, linux-amd64, linux-arm64]')
-        self.assertIn(".github/workflows/cd.yml: publish must need version, checks and every target's chain",
-                      self.problems())
+        self.assertIn(".github/workflows/cd.yml: publish must need version, checks and every target's chain, and run "
+                      "only if they all succeed", self.problems())
 
     def test_the_chain_is_build_embedder_test(self):
         self.edit('.github/workflows/target.yml', '    needs: embedder\n', '    needs: build\n')
@@ -92,8 +93,7 @@ class WorkflowShape(unittest.TestCase):
         self.edit('.github/workflows/target.yml', """    permissions:
       contents: read
 """, '')
-        self.assertIn('.github/workflows/target.yml: test must set its permissions, without id-token',
-                      self.problems())
+        self.assertIn('.github/workflows/target.yml: test must have exactly contents: read', self.problems())
 
     def test_the_apple_sdk_is_fetched_only_for_macos(self):
         self.edit('.github/workflows/target.yml', """      - id: apple-sdk
@@ -112,6 +112,81 @@ class WorkflowShape(unittest.TestCase):
     runs-on: lanescape-16vcpu-linux-amd64""", """    needs: build
     runs-on: lanescape-80vcpu-linux-amd64-spot""")
         self.assertTrue(any("only target.yml's build runs on" in p for p in self.problems()))
+
+    def test_the_test_runner_is_read_from_the_job_not_a_comment(self):
+        self.edit('.github/workflows/target.yml', """    runs-on: ${{ fromJSON(""",
+                  """    runs-on: lanescape-16vcpu-linux-amd64
+    # runs-on: ${{ fromJSON(""")
+        self.assertIn(".github/workflows/target.yml: the test must run on targets.json's test_runner for its target",
+                      self.problems())
+
+    def test_publish_runs_only_if_every_chain_succeeded(self):
+        self.edit('.github/workflows/cd.yml', """    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]
+""", """    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]
+    if: always()
+""")
+        problems = self.problems()
+        self.assertIn(".github/workflows/cd.yml: publish must need version, checks and every target's chain, and run "
+                      "only if they all succeed", problems)
+        self.assertTrue(any('no job or step may run past a failure' in p for p in problems))
+
+    def test_a_chain_job_runs_only_after_its_predecessor_succeeded(self):
+        self.edit('.github/workflows/target.yml', """    needs: build
+""", """    needs: build
+    if: ${{ inputs.target != '' }}
+""")
+        self.assertIn('.github/workflows/target.yml: embedder must run only if the job it needs succeeded',
+                      self.problems())
+
+    def test_nothing_runs_past_a_failure(self):
+        for workflow, old, new in (
+                ('target.yml', '    needs: embedder\n', '    needs: embedder\n    continue-on-error: true\n'),
+                ('target.yml', '    needs: build\n', '    needs: build\n    if: ${{ !cancelled() }}\n'),
+                ('checks.yml', '      - name: Script tests\n', '      - name: Script tests\n'
+                                                               '        continue-on-error: true\n')):
+            with self.subTest(workflow=workflow, new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit(f'.github/workflows/{workflow}', old, new)
+                self.assertTrue(any('no job or step may run past a failure' in p for p in self.problems()))
+
+    def test_target_yml_leaves_the_build_and_embedder_their_call_s_grant(self):
+        for old, new, problem in (
+                ('defaults:\n', 'permissions: {}\n\ndefaults:\n',
+                 'target.yml must set no permissions for the whole'),
+                ("""    runs-on: lanescape-80vcpu-linux-amd64-spot
+""", """    runs-on: lanescape-80vcpu-linux-amd64-spot
+    permissions:
+      contents: read
+""", 'target.yml: build must have no permissions of its own')):
+            with self.subTest(problem=problem):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/target.yml', old, new)
+                self.assertTrue(any(problem in p for p in self.problems()))
+
+    def test_only_publish_writes(self):
+        self.edit('.github/workflows/cd.yml', """    runs-on: lanescape-2vcpu-linux-amd64
+    permissions:
+      contents: read
+    outputs:""", """    runs-on: lanescape-2vcpu-linux-amd64
+    permissions:
+      contents: write
+    outputs:""")
+        self.assertIn('.github/workflows/cd.yml: version must have exactly contents: read', self.problems())
+
+    def test_an_inline_permission_map_is_refused(self):
+        self.edit('.github/workflows/ci.yml', """    permissions:
+      contents: read
+    with:
+      target: linux-amd64""", """    permissions: write-all
+    with:
+      target: linux-amd64""")
+        self.assertIn('.github/workflows/ci.yml: linux-amd64 must have exactly contents: read', self.problems())
+
+    def test_the_workflows_grant_nothing_by_default(self):
+        self.edit('.github/workflows/ci.yml', 'permissions: {}\n', 'permissions: read-all\n')
+        self.assertIn('.github/workflows/ci.yml must set `permissions: {}` for the whole workflow', self.problems())
 
 
 if __name__ == '__main__':
