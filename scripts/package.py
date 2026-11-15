@@ -348,6 +348,14 @@ def strip_libraries(libraries, toolchain, system, symbols):
                        check=True)
 
 
+def debug_size_line(target, symbols):
+    """How much debug information a release's symbols part would hold, uncompressed."""
+    size = sum(path.stat().st_size for path in symbols.rglob('*') if path.is_file())
+    limit = 2 << 30
+    verdict = 'under' if size < limit else 'at or over'
+    return f'{target}: {size >> 20} MiB of debug information uncompressed, {verdict} the 2 GiB release asset limit'
+
+
 def package(target, checkout, out, version, output, quick=False):
     from sdk import target_entry, pin, summary  # noqa: avoids a cycle at import
     if quick and not QUICK_VERSION.search(version):
@@ -420,6 +428,10 @@ def package(target, checkout, out, version, output, quick=False):
         # information just as a release's are, so CI tests the same library.
         symbols = (stage/'debug' if quick else part('symbols'))/'symbols'
     strip_libraries(binaries, toolchain_src, system, symbols)
+    if quick and symbols is not None:
+        # CI makes no symbols part, so this is the only sign of how near a release's is to the 2 GiB limit: the
+        # part holds this, compressed, so a size under the limit here keeps it under.
+        print(debug_size_line(target, symbols), flush=True)
 
     # libc++'s whole tree, whatever Chromium's headers happen to include: an embedder may use any of it.
     for tree in LIBCXX_TREES:

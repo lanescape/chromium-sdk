@@ -12,7 +12,7 @@
 
 There is one configuration per target, Chromium's release build, which embedders' development and release builds both link, so that what an embedder tests is what it ships, and so that the SDK's flags, which fix `DCHECK_IS_ON()` and every build flag in the headers, are one set:
 
-- `is_official_build = true`, `is_debug = false`, `dcheck_always_on = false`, with PGO and ThinLTO as official builds have them; `symbol_level = 1`, `blink_symbol_level = 0`, `v8_symbol_level = 0`.
+- `is_official_build = true`, `is_debug = false`, `dcheck_always_on = false`, with PGO and ThinLTO as official builds have them; `symbol_level = 1`, `blink_symbol_level = 1`, `v8_symbol_level = 1`: line tables everywhere, Blink and V8 included, so on Linux a stack through them has its files and lines, inlined calls included. `use_debug_fission = false` keeps all of the debug information in the linked library rather than in split DWARF's `.dwo` files, which the `symbols` part wouldn't hold; on Linux it goes to the `symbols` part, and the library ships stripped. macOS ships no debug information (no dSYMs, no `symbols` part), so the setting only costs its build time.
 - `is_component_build = false`: one library, which the patch's `libchromium_exports = true` makes export the component build's API (specs/0001-sdk.md, Exports), with `v8_expose_public_symbols = true` for V8's.
 - `libcxx_is_shared = true`: libc++ as a shared library the library and the embedder share.
 - `is_component_ffmpeg = true`: FFmpeg as its own shared library; `proprietary_codecs = false`, `ffmpeg_branding = "Chromium"`.

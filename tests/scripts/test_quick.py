@@ -133,5 +133,27 @@ class Package(unittest.TestCase):
         self.assertTrue(all(entry['quick'] is True for entry in listed))
 
 
+class DebugSize(unittest.TestCase):
+    """CI's only sign of how near a release's symbols part is to GitHub's 2 GiB limit."""
+
+    def test_the_line_sums_every_debug_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            symbols = Path(tmp)/'symbols'
+            (symbols/'nested').mkdir(parents=True)
+            (symbols/'libchromium.so.debug').write_bytes(b'\0' * (3 << 20))
+            (symbols/'nested'/'libffmpeg.so.debug').write_bytes(b'\0' * (1 << 20))
+            self.assertEqual(package.debug_size_line('linux-amd64', symbols),
+                             'linux-amd64: 4 MiB of debug information uncompressed, under the 2 GiB release asset limit')
+
+    def test_a_size_at_the_limit_says_so(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            symbols = Path(tmp)/'symbols'
+            symbols.mkdir()
+            with open(symbols/'big.debug', 'wb') as f:
+                f.truncate(2 << 30)  # sparse
+            self.assertIn('at or over the 2 GiB', package.debug_size_line('linux-arm64', symbols))
+
+
+
 if __name__ == '__main__':
     unittest.main()

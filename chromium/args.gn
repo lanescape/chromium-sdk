@@ -6,8 +6,12 @@ is_official_build = true
 is_component_build = false
 dcheck_always_on = false
 symbol_level = 1
-blink_symbol_level = 0
-v8_symbol_level = 0
+blink_symbol_level = 1
+v8_symbol_level = 1
+
+# All of the debug information in the library, which the symbols part keeps whole: split DWARF would leave part of
+# it, such as inlined calls, in .dwo files the symbols part doesn't hold.
+use_debug_fission = false
 use_remoteexec = false
 
 # Redistribution: no proprietary codecs, and FFmpeg as its own shared library, which a user may replace with one
