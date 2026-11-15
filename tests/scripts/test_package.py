@@ -120,6 +120,14 @@ class Flags(unittest.TestCase):
                      'pyproto/google/protobuf/any.py', './libchromium.so'):
             self.assertFalse(package.RUNTIME.match(name), name)
 
+    def test_shipped_runtime_listing(self):
+        listing = ('./libchromium.so\nicudtl.dat\n./libEGL.so\n./libc++.so\nvk_swiftshader_icd.json\n'
+                   './libvk_swiftshader.so\n./libvulkan.so.1\n./libVkICD_mock_icd.so\nangledata/VkICD_mock_icd.json\n'
+                   './libffmpeg.so\nsnapshot_blob.bin\npyproto/google/protobuf/any.py\n')
+        self.assertEqual(package.shipped_runtime(listing),
+                         ['libEGL.so', 'libffmpeg.so', 'libvk_swiftshader.so', 'libvulkan.so.1',
+                          'vk_swiftshader_icd.json'])
+
     def test_rewrite_path(self):
         mapping = package.path_mapping(LINUX)
         self.assertEqual(package.rewrite_path('../../base/foo.h', mapping), '{sdk}/include/base/foo.h')

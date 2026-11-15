@@ -294,11 +294,18 @@ def runtime_files(src, out):
     """The library's runtime dependencies that ship in lib/, by their names in the build directory."""
     import sdk
     listed = subprocess.check_output([str(sdk.depot_tools()/'gn'), 'desc', str(out), '//chromium_sdk:chromium',
-                                      'runtime_deps'], cwd=src, text=True, env=sdk.env()).split()
-    names = sorted({name[2:] for name in listed if RUNTIME.match(name if name.startswith('./') else './'+name)})
+                                      'runtime_deps'], cwd=src, text=True, env=sdk.env())
+    names = shipped_runtime(listed)
     if not any(name.startswith('libffmpeg') for name in names):
         raise SystemExit('the library no longer lists FFmpeg among its runtime dependencies')
     return names
+
+
+def shipped_runtime(listing):
+    """The names, in the build directory, of what ships from gn desc's runtime_deps listing, which writes a
+    linked output as ./<name> and a generated file as <name>."""
+    return sorted({name.removeprefix('./') for name in listing.split()
+                   if RUNTIME.match(name if name.startswith('./') else './'+name)})
 
 
 def strip(toolchain, path, system):
