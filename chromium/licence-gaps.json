@@ -48,12 +48,14 @@
     "why": "Crubit's support library, which comes with Chromium's Rust toolchain, with no README.chromium."
   },
   "third_party/swiftshader/third_party/llvm-10.0": {
-    "license": "Apache-2.0 WITH LLVM-exception AND NCSA",
+    "license": "Apache-2.0 WITH LLVM-exception AND NCSA AND BSD-3-Clause",
     "files": [
       "third_party/libc++/src/LICENSE.TXT",
-      "third_party/swiftshader/third_party/llvm-subzero/LICENSE.TXT"
+      "third_party/swiftshader/third_party/llvm-subzero/LICENSE.TXT",
+      "third_party/swiftshader/third_party/llvm-10.0/llvm/include/llvm/Support/LICENSE.TXT",
+      "third_party/swiftshader/third_party/llvm-10.0/llvm/lib/Support/COPYRIGHT.regex"
     ],
-    "why": "SwiftShader's copy of LLVM 10, linked on macOS, with no README.chromium or licence file of its own; LLVM 10 is under the Apache License 2.0 with LLVM Exceptions, which libc++'s licence text is, and its legacy University of Illinois/NCSA licence, which SwiftShader's older copy of LLVM carries."
+    "why": "SwiftShader's copy of LLVM 10, linked on macOS, with no README.chromium or licence file of its own; LLVM 10 is under the Apache License 2.0 with LLVM Exceptions, which libc++'s licence text is, and its legacy University of Illinois/NCSA licence, which SwiftShader's older copy of LLVM carries; and the copy's own notices, for its system interface library and its OpenBSD-derived regular expressions."
   },
   "third_party/swiftshader/third_party/marl": {
     "license": "Apache-2.0",
