@@ -265,6 +265,10 @@ def closure(variables, out, roots, language, jobs):
         result = subprocess.run(command+[root], cwd=out, text=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL)
         if result.returncode:
+            # Some of Chromium's headers use its build flags without including them, as its sources always have.
+            result = subprocess.run(command+['-include', '../../build/build_config.h', root], cwd=out, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if result.returncode:
             return root, None
         text = result.stdout.replace('\\\n', ' ')
         return root, text.split(':', 1)[1].split()
