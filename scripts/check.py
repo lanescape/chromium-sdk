@@ -235,11 +235,15 @@ def workflow_problems(repo):
                 if [other.strip() for other in step if re.match(r'\s+retention-days:', other)] != ['retention-days: 1']:
                     found.append(f'{relative}:{number}: keep the artifact for 1 day, `retention-days: 1`')
             if match and match.group(1) == './.github/actions/apple-sdk':
-                step = lines[max(0, number-3):number-1]
-                if relative != '.github/workflows/target.yml' or \
-                        not any(re.fullmatch(r"\s+if: inputs\.target == 'macos-arm64'", other) for other in step):
-                    found.append(f'{relative}:{number}: only target.yml may fetch the Apple SDK, and only for '
-                                 'macos-arm64')
+                # In its own step, guarded by its own condition, in a job its call's grant reaches.
+                job = next((heading.group(1) for heading in (re.fullmatch(r'  ([A-Za-z0-9_-]+):\s*', other)
+                                                                  for other in reversed(lines[:number-1]))
+                            if heading), None)
+                guarded = [other.strip() for other in step_lines(lines, number - 1) if re.match(r'\s+(- +)?if:', other)]
+                if relative != '.github/workflows/target.yml' or job not in ('build', 'embedder') or \
+                        guarded != ["if: inputs.target == 'macos-arm64'"]:
+                    found.append(f'{relative}:{number}: only target.yml\'s build and embedder may fetch the Apple SDK, '
+                                 'and only for macos-arm64')
     return found
 
 
