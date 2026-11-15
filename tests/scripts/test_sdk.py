@@ -30,7 +30,7 @@ class Patch(unittest.TestCase):
             git(where, 'config', 'commit.gpgsign', 'false')
         (self.src/'a.h').write_text('a\n')
         (self.src/'b.h').write_text('b\n')
-        (self.src/'.gitignore').write_text('v8/\nchromium_sdk/\n')
+        (self.src/'.gitignore').write_text('v8/\nlibchromium/\n')
         git(self.src, 'add', '.')
         git(self.src, 'commit', '-qm', 'pin')
         (self.src/'v8/c.h').write_text('c\n')
@@ -38,16 +38,16 @@ class Patch(unittest.TestCase):
         git(self.src/'v8', 'commit', '-qm', 'pin')
         (self.repo/'chromium/gn').mkdir(parents=True)
         (self.repo/'chromium/gn/BUILD.gn').write_text('# gn\n')
-        self.saved = sdk.REPO, os.environ.get('CHROMIUM_SDK_CHECKOUT')
+        self.saved = sdk.REPO, os.environ.get('LIBCHROMIUM_CHECKOUT')
         sdk.REPO = self.repo
-        os.environ['CHROMIUM_SDK_CHECKOUT'] = str(root/'checkout')
+        os.environ['LIBCHROMIUM_CHECKOUT'] = str(root/'checkout')
 
     def tearDown(self):
         sdk.REPO = self.saved[0]
         if self.saved[1] is None:
-            os.environ.pop('CHROMIUM_SDK_CHECKOUT', None)
+            os.environ.pop('LIBCHROMIUM_CHECKOUT', None)
         else:
-            os.environ['CHROMIUM_SDK_CHECKOUT'] = self.saved[1]
+            os.environ['LIBCHROMIUM_CHECKOUT'] = self.saved[1]
         self.tmp.cleanup()
 
     def write_patches(self, src_text, v8_text='C\n'):
@@ -73,7 +73,7 @@ class Patch(unittest.TestCase):
         before = (self.src/'a.h').stat().st_mtime_ns
         self.patch()
         self.assertEqual((self.src/'a.h').stat().st_mtime_ns, before)
-        self.assertEqual((self.src/'chromium_sdk/BUILD.gn').read_text(), '# gn\n')
+        self.assertEqual((self.src/'libchromium/BUILD.gn').read_text(), '# gn\n')
 
     def test_resumes_between_repositories(self):
         self.write_patches('A\n')

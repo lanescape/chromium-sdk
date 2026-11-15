@@ -3,7 +3,7 @@
 
 Steps, in order: checkout, packages, mac-sdk (macOS only), patch, configure, build, package, and for a release, sources. Each is safe to run again on a
 kept disk, such as one restored or resumed by the runner service: it does nothing when its work is done, and a
-build carries on from what ninja finds. The checkout is at $CHROMIUM_SDK_CHECKOUT, or ~/chromium-sdk/checkout.
+build carries on from what ninja finds. The checkout is at $LIBCHROMIUM_CHECKOUT, or ~/libchromium/checkout.
 """
 import argparse
 import hashlib
@@ -24,11 +24,11 @@ DEPOT_TOOLS_URL = 'https://chromium.googlesource.com/chromium/tools/depot_tools.
 CHROMIUM_URL = 'https://chromium.googlesource.com/chromium/src.git'
 HERMETIC_XCODE = 'build/mac_files/xcode_binaries'
 APPLE_SDK_IN_XCODE = 'Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
-GN_DIR = 'chromium_sdk'
+GN_DIR = 'libchromium'
 
 
 def checkout_root():
-    return Path(os.environ.get('CHROMIUM_SDK_CHECKOUT', Path.home()/'chromium-sdk/checkout')).resolve()
+    return Path(os.environ.get('LIBCHROMIUM_CHECKOUT', Path.home()/'libchromium/checkout')).resolve()
 
 
 def depot_tools():
@@ -99,7 +99,7 @@ def gclient_digest():
 def checkout_record():
     """What the checkout was last synced to: the pin and .gclient, written when a sync finishes and removed before
     anything changes, so it only ever describes a checkout that is whole."""
-    return checkout_root()/'.chromium-sdk-checkout.json'
+    return checkout_root()/'.libchromium-checkout.json'
 
 
 def wanted_checkout():
@@ -184,7 +184,7 @@ def step_mac_sdk(target, args):
         return
     # Where Chromium looks for a hermetic Xcode, or for an embedder's build, wherever it's asked.
     destination = Path(args.destination) if args.destination else checkout_root()/'src'/HERMETIC_XCODE
-    marker = destination/'.chromium-sdk-apple-sdk'
+    marker = destination/'.libchromium-apple-sdk'
     if marker.is_file() and marker.read_text() == entry['sha256']:
         print('mac-sdk: the pinned SDK is in place', flush=True)
         return
@@ -226,7 +226,7 @@ def patch_files(root=None):
 
 def applied_dir():
     """Copies of the patches applied to the checkout, which revert them whatever the repository's patches are now."""
-    return checkout_root()/'.chromium-sdk-applied'
+    return checkout_root()/'.libchromium-applied'
 
 
 def patched_files(patch):
@@ -358,7 +358,7 @@ def step_configure(target, args):
 
 def step_build(target, args):
     jobs = ['-j', str(args.jobs)] if args.jobs else []
-    run('autoninja', *jobs, '-C', out_dir(target), 'chromium_sdk', cwd=checkout_root()/'src')
+    run('autoninja', *jobs, '-C', out_dir(target), 'libchromium', cwd=checkout_root()/'src')
 
 
 def step_package(target, args):
@@ -378,7 +378,7 @@ def step_sources(target, args):
                   {'x64': 'amd64', 'arm64': 'arm64'}[entry['target_cpu']])
                  for entry in targets().values() if entry.get('sysroot')]
         # Not on the kept disk, which holds only the build: the job downloads them each time.
-        cache = Path(args.cache) if args.cache else Path(tempfile.gettempdir())/'chromium-sdk-debian-cache'
+        cache = Path(args.cache) if args.cache else Path(tempfile.gettempdir())/'libchromium-debian-cache'
         written.append(licences.sysroot_sources(checkout_root()/'src', linux, cache, output, args.version,
                                                 'debian-bullseye-sysroots'))
         written.append(licences.sdk_source(output, args.version))

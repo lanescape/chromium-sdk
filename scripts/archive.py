@@ -6,7 +6,7 @@ from pathlib import Path
 
 # 2000-01-01T00:00:00Z. Every member has this time, so an archive depends only on its files' contents and modes.
 EPOCH = 946684800
-LEVEL = os.environ.get('CHROMIUM_SDK_ZSTD_LEVEL', '19')
+LEVEL = os.environ.get('LIBCHROMIUM_ZSTD_LEVEL', '19')
 
 
 def members(directory):

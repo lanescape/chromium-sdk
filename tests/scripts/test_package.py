@@ -11,7 +11,7 @@ class Flags(unittest.TestCase):
     def test_compile(self):
         mapping = package.path_mapping(LINUX)
         argv = ['../../third_party/llvm-build/Release+Asserts/bin/clang++', '-MMD', '-MF', 'obj/x.o.d',
-                '-DCHROMIUM_SDK_EXPORTS', '-D_LIBCPP_ABI_NAMESPACE=__Cr', '-I../..', '-Igen',
+                '-DLIBCHROMIUM_EXPORTS', '-D_LIBCPP_ABI_NAMESPACE=__Cr', '-I../..', '-Igen',
                 '-I../../third_party/skia', '-Igen/third_party/perfetto', '-isystem',
                 '../../third_party/libc++/src/include', '--sysroot=../../build/linux/debian_bullseye_amd64-sysroot',
                 '-fno-exceptions', '-std=c++23', '-nostdinc++', '-O2', '-g1', '-Wall', '-Wno-foo', '-Werror',
@@ -22,9 +22,9 @@ class Flags(unittest.TestCase):
                 '-Xclang', '-plugin-arg-find-bad-constructs', '-Xclang', 'check-ipc',
                 '-Xclang', '-fno-something-abi', '-mllvm', '-instcombine-lower-dbg-declare=0',
                 '-Xclang', '-fmodule-file-home-is-cwd', '-Xclang', '-fmodules-cache-path=/not_exist_dummy_dir',
-                '-fdebug-compilation-dir=.', '-c', '../../chromium_sdk/embedder_probe.cc', '-o', 'obj/x.o']
+                '-fdebug-compilation-dir=.', '-c', '../../libchromium/embedder_probe.cc', '-o', 'obj/x.o']
         flags, defines, includes, system = package.compile_flags(argv, mapping)
-        self.assertEqual(defines, ['CHROMIUM_SDK_EXPORTS', '_LIBCPP_ABI_NAMESPACE=__Cr'])
+        self.assertEqual(defines, ['LIBCHROMIUM_EXPORTS', '_LIBCPP_ABI_NAMESPACE=__Cr'])
         self.assertEqual(includes, ['{sdk}/include', '{sdk}/gen', '{sdk}/include/third_party/skia',
                                     '{sdk}/gen/third_party/perfetto'])
         self.assertEqual(system, ['{sdk}/include/third_party/libc++/src/include',

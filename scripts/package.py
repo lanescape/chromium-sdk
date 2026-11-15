@@ -227,7 +227,7 @@ def gn_json(src, out, *args):
 
 def root_headers(src, out):
     """The headers of the library's public targets, as paths relative to the build directory."""
-    linked = set(gn_json(src, out, '//chromium_sdk:chromium', 'deps', '--all')['//chromium_sdk:chromium']['deps'])
+    linked = set(gn_json(src, out, '//libchromium:chromium', 'deps', '--all')['//libchromium:chromium']['deps'])
     described = {}
     for field in ('sources', 'public'):
         for label, fields in gn_json(src, out, '//*', field).items():
@@ -293,7 +293,7 @@ RUNTIME = re.compile(r'^\./(lib(ffmpeg|EGL|GLESv2|vk_swiftshader)\.(so|dylib)|li
 def runtime_files(src, out):
     """The library's runtime dependencies that ship in lib/, by their names in the build directory."""
     import sdk
-    listed = subprocess.check_output([str(sdk.depot_tools()/'gn'), 'desc', str(out), '//chromium_sdk:chromium',
+    listed = subprocess.check_output([str(sdk.depot_tools()/'gn'), 'desc', str(out), '//libchromium:chromium',
                                       'runtime_deps'], cwd=src, text=True, env=sdk.env())
     names = shipped_runtime(listed)
     if not any(name.startswith('libffmpeg') for name in names):
@@ -332,7 +332,7 @@ def package(target, checkout, out, version, output):
     suffix = '.dylib' if system == 'mac' else '.so'
 
     # Flags, from GN's settings for the probe's compiles and link.
-    variables = target_variables(out/'obj/chromium_sdk/embedder_probe.ninja')
+    variables = target_variables(out/'obj/libchromium/embedder_probe.ninja')
     flags_cc, defines, includes, system_includes = compile_flags(compile_argv(variables, 'c++'), mapping)
     languages = {'c++': flags_cc}
     if system == 'mac':
@@ -371,7 +371,7 @@ def package(target, checkout, out, version, output):
         runtime_libraries.append(f'lib/{name}')
     resources = lib/'resources'
     # The packs, without the lists of what's in them that the build keeps.
-    shutil.copytree(out/'chromium_sdk', resources, ignore=shutil.ignore_patterns('*.info'))
+    shutil.copytree(out/'libchromium', resources, ignore=shutil.ignore_patterns('*.info'))
     for name in ('icudtl.dat', 'v8_context_snapshot.bin', 'snapshot_blob.bin'):
         if (out/name).exists():
             shutil.copy2(out/name, resources/name)
@@ -445,7 +445,7 @@ def package(target, checkout, out, version, output):
 
     written = []
     for name, directory in parts.items():
-        asset = output/f'chromium-sdk-{version}-{target}-{name}.tar.zst'
+        asset = output/f'libchromium-{version}-{target}-{name}.tar.zst'
         archive.write(directory, asset)
         size = asset.stat().st_size
         written.append({'name': asset.name, 'target': target, 'part': name, 'size': size})

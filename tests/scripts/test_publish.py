@@ -18,7 +18,7 @@ class Manifest(unittest.TestCase):
     def test_lists_every_asset(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            names = ['chromium-sdk-1-linux-amd64-lib.tar.zst', 'chromium-sdk-1-source-chromium-sdk.tar.zst']
+            names = ['libchromium-1-linux-amd64-lib.tar.zst', 'libchromium-1-source-libchromium.tar.zst']
             assets(tmp, {name: name.encode() for name in names})
             described = {names[0]: {'target': 'linux-amd64', 'part': 'lib'}, names[1]: {'part': 'source'}}
             manifest = publish.write_manifest(tmp, '1', 'c'*40, PIN, described)
@@ -35,21 +35,21 @@ class Manifest(unittest.TestCase):
     def test_undescribed_or_missing_assets_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            assets(tmp, {'chromium-sdk-1-x.tar.zst': b'x'})
+            assets(tmp, {'libchromium-1-x.tar.zst': b'x'})
             with self.assertRaises(SystemExit):
                 publish.write_manifest(tmp, '1', 'c'*40, PIN, {})
             with self.assertRaises(SystemExit):
-                publish.write_manifest(tmp, '1', 'c'*40, PIN, {'chromium-sdk-1-x.tar.zst': {},
-                                                               'chromium-sdk-1-y.tar.zst': {}})
+                publish.write_manifest(tmp, '1', 'c'*40, PIN, {'libchromium-1-x.tar.zst': {},
+                                                               'libchromium-1-y.tar.zst': {}})
 
     def test_two_jobs_may_describe_one_asset_the_same_way(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            entry = {'name': 'chromium-sdk-1-source-x.tar.zst', 'part': 'source', 'size': 3, 'dir': 'x'}
+            entry = {'name': 'libchromium-1-source-x.tar.zst', 'part': 'source', 'size': 3, 'dir': 'x'}
             (tmp/'assets-a.json').write_text(json.dumps([entry]))
             (tmp/'assets-b.json').write_text(json.dumps([dict(entry, size=3)]))
             described = publish.merge_descriptions([tmp/'assets-a.json', tmp/'assets-b.json'])
-            self.assertEqual(described, {'chromium-sdk-1-source-x.tar.zst': {'part': 'source', 'dir': 'x'}})
+            self.assertEqual(described, {'libchromium-1-source-x.tar.zst': {'part': 'source', 'dir': 'x'}})
             (tmp/'assets-c.json').write_text(json.dumps([dict(entry, dir='y')]))
             with self.assertRaises(SystemExit):
                 publish.merge_descriptions([tmp/'assets-a.json', tmp/'assets-c.json'])
@@ -63,12 +63,12 @@ class Manifest(unittest.TestCase):
             tmp = Path(tmp)
             for job, data in (('one', b'a'), ('two', b'a')):
                 (tmp/job).mkdir()
-                assets(tmp/job, {'chromium-sdk-1-source-x.tar.zst': data})
+                assets(tmp/job, {'libchromium-1-source-x.tar.zst': data})
                 (tmp/job/'assets-sources.json').write_text('[]')
             publish.gather(tmp/'out', [tmp/'one', tmp/'two'])
-            self.assertTrue((tmp/'out/chromium-sdk-1-source-x.tar.zst').exists())
+            self.assertTrue((tmp/'out/libchromium-1-source-x.tar.zst').exists())
             (tmp/'three').mkdir()
-            assets(tmp/'three', {'chromium-sdk-1-source-x.tar.zst': b'b'})
+            assets(tmp/'three', {'libchromium-1-source-x.tar.zst': b'b'})
             with self.assertRaises(SystemExit):
                 publish.gather(tmp/'out2', [tmp/'one', tmp/'three'])
 
@@ -113,7 +113,7 @@ class FakeGitHub:
 
 class Release(unittest.TestCase):
     def prepared(self, tmp):
-        names = ['chromium-sdk-1-linux-amd64-lib.tar.zst']
+        names = ['libchromium-1-linux-amd64-lib.tar.zst']
         assets(tmp, {name: b'lib' for name in names})
         publish.write_manifest(tmp, '1', 'c'*40, PIN, {names[0]: {'target': 'linux-amd64', 'part': 'lib'}})
 
@@ -124,7 +124,7 @@ class Release(unittest.TestCase):
             github = FakeGitHub()
             publish.release(tmp, github)
             self.assertTrue(github.published)
-            self.assertEqual(sorted(github.uploaded), ['SHA256SUMS', 'chromium-sdk-1-linux-amd64-lib.tar.zst',
+            self.assertEqual(sorted(github.uploaded), ['SHA256SUMS', 'libchromium-1-linux-amd64-lib.tar.zst',
                                                        'manifest.json'])
             self.assertEqual(github.calls[-2][0], 'PATCH')
 

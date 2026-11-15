@@ -41,7 +41,7 @@ runs:
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
-        CHROMIUM_SDK_CHECKOUT: /work/chromium
+        LIBCHROMIUM_CHECKOUT: /work/chromium
         DEPOT_TOOLS: /work/depot_tools
         CHROMIUM_SDK_APPLE_SDK_BUCKET: ${{ inputs.apple-sdk-bucket }}
       run: |
@@ -53,7 +53,7 @@ runs:
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
-        CHROMIUM_SDK_CHECKOUT: /work/chromium
+        LIBCHROMIUM_CHECKOUT: /work/chromium
         DEPOT_TOOLS: /work/depot_tools
       run: python3 scripts/sdk.py build "$TARGET"
     - name: Package
@@ -62,7 +62,7 @@ runs:
         TARGET: ${{ inputs.target }}
         VERSION: ${{ inputs.version }}
         RELEASE: ${{ inputs.release }}
-        CHROMIUM_SDK_CHECKOUT: /work/chromium
+        LIBCHROMIUM_CHECKOUT: /work/chromium
         DEPOT_TOOLS: /work/depot_tools
       run: |
         set -euo pipefail

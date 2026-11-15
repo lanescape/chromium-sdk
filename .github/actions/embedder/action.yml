@@ -44,7 +44,7 @@ runs:
         sdk="$RUNNER_TEMP/sdk"
         mkdir -p "$sdk"
         for part in lib headers toolchain sysroot; do
-          for file in "$RUNNER_TEMP"/package/chromium-sdk-*-"$TARGET-$part".tar.zst; do
+          for file in "$RUNNER_TEMP"/package/libchromium-*-"$TARGET-$part".tar.zst; do
             if [ -f "$file" ]; then
               tar --zstd -xf "$file" -C "$sdk"
             fi

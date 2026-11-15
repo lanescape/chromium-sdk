@@ -6,8 +6,8 @@
 
 #include "base/strings/sys_string_conversions.h"
 
-std::string ChromiumSdkProbeObjectiveC() {
+std::string LibchromiumProbeObjectiveC() {
   @autoreleasepool {
-    return base::SysNSStringToUTF8(@"chromium-sdk");
+    return base::SysNSStringToUTF8(@"libchromium");
   }
 }

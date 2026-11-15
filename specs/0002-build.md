@@ -1,6 +1,6 @@
 # Building the SDK
 
-`scripts/sdk.py <step> <target>` builds one target, on Linux x86-64 for every target. Its steps, in order, are `checkout`, `packages`, `mac-sdk`, `patch`, `configure`, `build`, `package`, and for a release `sources`. Each is safe to run again on a kept disk, such as one the runner service restores or resumes (specs/0003-ci-cd.md): a step that finds its work done does nothing, and a build carries on from what Siso finds. The checkout is at `$CHROMIUM_SDK_CHECKOUT` (default `~/chromium-sdk/checkout`) and depot_tools at `$DEPOT_TOOLS` (default beside it).
+`scripts/sdk.py <step> <target>` builds one target, on Linux x86-64 for every target. Its steps, in order, are `checkout`, `packages`, `mac-sdk`, `patch`, `configure`, `build`, `package`, and for a release `sources`. Each is safe to run again on a kept disk, such as one the runner service restores or resumes (specs/0003-ci-cd.md): a step that finds its work done does nothing, and a build carries on from what Siso finds. The checkout is at `$LIBCHROMIUM_CHECKOUT` (default `~/libchromium/checkout`) and depot_tools at `$DEPOT_TOOLS` (default beside it).
 
 ## Checkout
 
@@ -13,7 +13,7 @@
 There is one configuration per target, Chromium's release build, which embedders' development and release builds both link, so that what an embedder tests is what it ships, and so that the SDK's flags, which fix `DCHECK_IS_ON()` and every build flag in the headers, are one set:
 
 - `is_official_build = true`, `is_debug = false`, `dcheck_always_on = false`, with PGO and ThinLTO as official builds have them; `symbol_level = 1`, `blink_symbol_level = 0`, `v8_symbol_level = 0`.
-- `is_component_build = false`: one library, which the patch's `chromium_sdk_exports = true` makes export the component build's API (specs/0001-sdk.md, Exports), with `v8_expose_public_symbols = true` for V8's.
+- `is_component_build = false`: one library, which the patch's `libchromium_exports = true` makes export the component build's API (specs/0001-sdk.md, Exports), with `v8_expose_public_symbols = true` for V8's.
 - `libcxx_is_shared = true`: libc++ as a shared library the library and the embedder share.
 - `is_component_ffmpeg = true`: FFmpeg as its own shared library; `proprietary_codecs = false`, `ffmpeg_branding = "Chromium"`.
 - `is_cfi = false`, `use_cfi_icall = false`: control-flow integrity can't allow calls into an embedder.
@@ -21,9 +21,9 @@ There is one configuration per target, Chromium's release build, which embedders
 
 ## The patch
 
-`chromium/patches/` holds the SDK's one change to Chromium, as one patch for each repository it touches, applied by `patch`. It adds the GN argument `chromium_sdk_exports`, which:
+`chromium/patches/` holds the SDK's one change to Chromium, as one patch for each repository it touches, applied by `patch`. It adds the GN argument `libchromium_exports`, which:
 
-- defines `CHROMIUM_SDK_EXPORTS` for every target, which every export header that keys its `visibility("default")` on `COMPONENT_BUILD` (PartitionAlloc's, on its own `IS_COMPONENT_BUILD` flag) also takes, so a non-component build's shared library exports what a component build's libraries do;
+- defines `LIBCHROMIUM_EXPORTS` for every target, which every export header that keys its `visibility("default")` on `COMPONENT_BUILD` (PartitionAlloc's, on its own `IS_COMPONENT_BUILD` flag) also takes, so a non-component build's shared library exports what a component build's libraries do;
 - builds components as source sets in the target's toolchain, so the library takes each whole, as a component build's libraries do, and keeps every export whether anything in it calls the export or not (a non-component build's static libraries would give the link only the objects something refers to);
 - keeps `PRESERVE_MOST` off in base and V8, as in a component build;
 - gives V8's thread-locals the model a shared library can hold, as in a component build (Blink's heap has an argument of its own for that, `blink_heap_inside_shared_library = true`, among the settings);
@@ -37,14 +37,14 @@ There is one configuration per target, Chromium's release build, which embedders
 
 ## Build
 
-`patch` also copies `chromium/gn/` into the tree as `//chromium_sdk`, only where it changed, so a new checkout of this repository rebuilds nothing. `//chromium_sdk` holds:
+`patch` also copies `chromium/gn/` into the tree as `//libchromium`, only where it changed, so a new checkout of this repository rebuilds nothing. `//libchromium` holds:
 
 - `:chromium`, the shared library, whose public dependencies are the exported targets, so a target that depends on it compiles with their settings and links only the library, a shared library being a link boundary;
 - `:embedder_probe`, an embedder in miniature that depends only on `:chromium`; it is never run, and its compile and link commands are the flags the SDK ships;
 - `:resources` and `:locales`, the resource packs;
-- `:chromium_sdk`, everything a package needs, with ICU's data and V8's snapshot.
+- `:libchromium`, everything a package needs, with ICU's data and V8's snapshot.
 
-`build` runs `autoninja` for `:chromium_sdk`. A failed build fails the step.
+`build` runs `autoninja` for `:libchromium`. A failed build fails the step.
 
 ## macOS
 
@@ -67,7 +67,7 @@ Archives are deterministic: entries sorted, times, owners and modes fixed, compr
 On a Linux x86-64 machine with about 250 GB free, for one target:
 
 ```
-export CHROMIUM_SDK_CHECKOUT=$HOME/chromium-sdk/checkout
+export LIBCHROMIUM_CHECKOUT=$HOME/libchromium/checkout
 for step in checkout packages mac-sdk patch configure build; do python3 scripts/sdk.py $step linux-amd64; done
 python3 scripts/sdk.py package linux-amd64 --version 157.0.8103.39-dev --output out
 ```

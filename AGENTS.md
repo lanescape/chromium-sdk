@@ -1,4 +1,4 @@
-# Chromium SDK development
+# libchromium development
 
 Read the applicable specifications in `specs/` before editing, and keep them, the code and the tests in step. Don't change behaviour that a spec describes without changing the spec in the same pull request.
 

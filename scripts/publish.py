@@ -28,7 +28,7 @@ from pathlib import Path
 LIMIT = 2*1024**3
 API = 'https://api.github.com'
 UPLOADS = 'https://uploads.github.com'
-NAME = re.compile(r'^chromium-sdk-[0-9A-Za-z.\-]+\.tar\.zst$')
+NAME = re.compile(r'^libchromium-[0-9A-Za-z.\-]+\.tar\.zst$')
 MANIFEST = 'manifest.json'
 SUMS = 'SHA256SUMS'
 
@@ -135,7 +135,7 @@ class GitHub:
     def request(self, method, url, body=None, headers=None, expect=(200,)):
         headers = dict(headers or {})
         headers.update({'Authorization': f'Bearer {self.token}', 'Accept': 'application/vnd.github+json',
-                        'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'chromium-sdk-publish'})
+                        'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'libchromium-publish'})
         data = body
         if isinstance(body, (dict, list)):
             data = json.dumps(body).encode()
@@ -195,7 +195,7 @@ class GitHub:
         request = urllib.request.Request(
             f'{API}/repos/{self.repository}/releases/assets/{asset["id"]}',
             headers={'Authorization': f'Bearer {self.token}', 'Accept': 'application/octet-stream',
-                     'User-Agent': 'chromium-sdk-publish'})
+                     'User-Agent': 'libchromium-publish'})
         hasher = hashlib.sha256()
         with urllib.request.urlopen(request, timeout=600) as response:
             while block := response.read(1 << 20):

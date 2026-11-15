@@ -1,4 +1,4 @@
-# Chromium SDK
+# libchromium
 
 Prebuilt Chromium for embedders of its Content API. Each version is upstream Chromium at one release tag, built with fixed settings as one shared library that exports the Content API, and shipped with what an embedder needs to compile and link its own code against it: the headers, generated ones included, the build settings, and Chromium's own toolchain, its clang and its libc++. An embedder pins a version, compiles only its own code and links the library; it never compiles Chromium. Moving to a new Chromium release, or to new settings, is moving to a new version.
 
@@ -13,10 +13,10 @@ Each version is a GitHub release of this repository, tagged `v<Chromium tag>-<re
 On a Linux x86-64 machine (specs/0002-build.md):
 
 ```
-export CHROMIUM_SDK_CHECKOUT=$HOME/chromium-sdk/checkout
+export LIBCHROMIUM_CHECKOUT=$HOME/libchromium/checkout
 for step in checkout packages mac-sdk patch configure build; do python3 scripts/sdk.py $step linux-amd64; done
 python3 scripts/sdk.py package linux-amd64 --version 157.0.8103.39-dev --output out
-mkdir sdk && for part in lib headers toolchain sysroot; do tar --zstd -xf out/chromium-sdk-*-linux-amd64-$part.tar.zst -C sdk; done
+mkdir sdk && for part in lib headers toolchain sysroot; do tar --zstd -xf out/libchromium-*-linux-amd64-$part.tar.zst -C sdk; done
 python3 tests/embedder/build.py --sdk sdk --output embedder
 tar -cf embedder.tar -C embedder . && tests/embedder/test.sh embedder.tar
 ```

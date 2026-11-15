@@ -1,5 +1,5 @@
 diff --git a/gn/BUILD.gn b/gn/BUILD.gn
-index 24204c1415..fc2cb216ca 100644
+index 24204c1415..01076fcd24 100644
 --- a/gn/BUILD.gn
 +++ b/gn/BUILD.gn
 @@ -41,7 +41,8 @@ action("gen_buildflags") {
@@ -8,7 +8,7 @@ index 24204c1415..fc2cb216ca 100644
    perfetto_component_build = false
 -  if (defined(is_component_build) && is_component_build) {
 +  if ((defined(is_component_build) && is_component_build) ||
-+      (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
++      (defined(libchromium_exports) && libchromium_exports)) {
      perfetto_component_build = true
    }
    perfetto_force_dlog_on = perfetto_force_dlog == "on"

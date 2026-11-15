@@ -10,33 +10,33 @@ class RewriteHeader(unittest.TestCase):
                 '#define FOO_EXPORT __attribute__((visibility("default")))\n#endif\n#else  // defined(COMPONENT_BUILD)\n'
                 '#define FOO_EXPORT\n#endif  // defined(COMPONENT_BUILD)\n')
         out = export_patch.rewrite_header(text)
-        self.assertTrue(out.startswith('#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))\n'))
+        self.assertTrue(out.startswith('#if (defined(COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS))\n'))
         # Comments after #else and #endif stay as they were.
         self.assertIn('#else  // defined(COMPONENT_BUILD)\n', out)
         self.assertIn('#endif  // defined(COMPONENT_BUILD)\n', out)
 
     def test_negated_and_elif(self):
         self.assertEqual(export_patch.rewrite_header('#if !defined(COMPONENT_BUILD)\n'),
-                         '#if !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))\n')
+                         '#if !(defined(COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS))\n')
         self.assertEqual(export_patch.rewrite_header('#elif defined(COMPONENT_BUILD) && defined(WIN32)\n'),
-                         '#elif (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && defined(WIN32)\n')
+                         '#elif (defined(COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS)) && defined(WIN32)\n')
 
     def test_partition_alloc(self):
         self.assertEqual(export_patch.rewrite_header('#if PA_BUILDFLAG(IS_COMPONENT_BUILD)\n'),
-                         '#if (PA_BUILDFLAG(IS_COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))\n')
+                         '#if (PA_BUILDFLAG(IS_COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS))\n')
         self.assertEqual(export_patch.rewrite_header('#endif  // PA_BUILDFLAG(IS_COMPONENT_BUILD)\n'),
                          '#endif  // PA_BUILDFLAG(IS_COMPONENT_BUILD)\n')
 
     def test_ifdef(self):
         self.assertEqual(export_patch.rewrite_header('#ifdef COMPONENT_BUILD\n'),
-                         '#if (defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))\n')
+                         '#if (defined(COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS))\n')
         self.assertEqual(export_patch.rewrite_header('#ifndef COMPONENT_BUILD // x\n'),
-                         '#if !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) // x\n')
+                         '#if !(defined(COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS)) // x\n')
 
     def test_continued_condition(self):
         text = '#if defined(A) && \\\n    !defined(COMPONENT_BUILD) && \\\n    defined(B)\nint defined(COMPONENT_BUILD);\n'
         out = export_patch.rewrite_header(text)
-        self.assertIn('    !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS)) && \\\n', out)
+        self.assertIn('    !(defined(COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS)) && \\\n', out)
         # Code, not a condition, is left alone.
         self.assertTrue(out.endswith('int defined(COMPONENT_BUILD);\n'))
 
@@ -87,7 +87,7 @@ class CarriedPatches(unittest.TestCase):
                 body = line[1:].strip()
                 if not body or body.startswith(('#', '//')) and 'COMPONENT_BUILD' not in body:
                     continue
-                if body in ('}', 'defines += [ "CHROMIUM_SDK_EXPORTS" ]', 'chromium_sdk_exports = false',
+                if body in ('}', 'defines += [ "LIBCHROMIUM_EXPORTS" ]', 'libchromium_exports = false',
                             'cflags += [ "-fwhole-program-vtables" ]', 'defines += [ "SKIA_DLL" ]',
                             'defines += [ "ABSL_BUILD_DLL" ]', 'perfetto_component_build = true',
                             'if ((defined(is_component_build) && is_component_build) ||',
@@ -97,9 +97,9 @@ class CarriedPatches(unittest.TestCase):
                             'ldflags = [ "-Wl,-install_name,@rpath/libc++_chrome.dylib" ]',
                             '_component_mode = "source_set"'):
                     continue
-                if body.startswith('if (!is_component_build && !(defined(chromium_sdk_exports)'):
+                if body.startswith('if (!is_component_build && !(defined(libchromium_exports)'):
                     continue
-                self.assertTrue('CHROMIUM_SDK_EXPORTS' in body or 'chromium_sdk_exports' in body,
+                self.assertTrue('LIBCHROMIUM_EXPORTS' in body or 'libchromium_exports' in body,
                                 f'{patch.name}: {line}')
 
 

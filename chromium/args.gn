@@ -17,11 +17,11 @@ ffmpeg_branding = "Chromium"
 is_component_ffmpeg = true
 
 # One shared library that exports what a component build exports (chromium/patches, specs/0001-sdk.md).
-chromium_sdk_exports = true
+libchromium_exports = true
 v8_expose_public_symbols = true
 
 # Thread-locals a shared library can hold, as in a component build: the executable-only local-exec model can't
-# link into one. V8's follow chromium_sdk_exports.
+# link into one. V8's follow libchromium_exports.
 blink_heap_inside_shared_library = true
 
 # Chromium's libc++ as a shared library of its own, so the library and its embedder share one std::__Cr.
@@ -32,4 +32,4 @@ libcxx_is_shared = true
 is_cfi = false
 use_cfi_icall = false
 
-root_extra_deps = [ "//chromium_sdk" ]
+root_extra_deps = [ "//libchromium" ]

@@ -2,11 +2,11 @@
 """Writes chromium/patches/ from a clean checkout at the pin: export_patch.py <checkout src>.
 
 The SDK's one change to Chromium (specs/0002-build.md, The patch). It adds the build argument
-`chromium_sdk_exports`, which makes a non-component build's shared libraries export what a component build
+`libchromium_exports`, which makes a non-component build's shared libraries export what a component build
 exports between its components, and turns off what can't hold across that boundary:
 
 - Every export header that keys its `visibility("default")` annotation on `COMPONENT_BUILD` (PartitionAlloc's on
-  its own IS_COMPONENT_BUILD flag) also takes `CHROMIUM_SDK_EXPORTS`, which the argument defines for every target. One rule covers them all, so moving the
+  its own IS_COMPONENT_BUILD flag) also takes `LIBCHROMIUM_EXPORTS`, which the argument defines for every target. One rule covers them all, so moving the
   pin only needs this script run again.
 - `PRESERVE_MOST` in base and V8 stays off, as in a component build: a lazily bound call to an exported function
   would clobber the registers it promises to keep.
@@ -38,8 +38,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PATCHES = REPO/'chromium/patches'
-DEFINE = 'CHROMIUM_SDK_EXPORTS'
-ARG = 'chromium_sdk_exports'
+DEFINE = 'LIBCHROMIUM_EXPORTS'
+ARG = 'libchromium_exports'
 
 # Export headers in these trees are never compiled into the SDK: Chrome itself and what only it links, other
 # platforms, and tests.
@@ -64,7 +64,7 @@ GN_EDITS = (
      '                       current_os != "ios" && current_os != "watchos"\n'
      '\n'
      '  # Export from a non-component build\'s shared libraries what a component build exports between its\n'
-     '  # components, for embedders that link Chromium as one shared library (chromium-sdk).\n'
+     '  # components, for embedders that link Chromium as one shared library (libchromium).\n'
      f'  {ARG} = false\n'),
     # A non-component build makes components static libraries, from which a link takes only the objects something
     # refers to, so an export nothing in the library calls would be left out. The SDK's library takes every

@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 COPYLEFT = re.compile(r'\b(L?GPL|MPL|EPL|CDDL|CPL|OSL)\b|lgpl|mpl-|gpl-', re.IGNORECASE)
 # Never inputs to the build: Blink's web tests are most of its directory.
 UNBUILT = {'web_tests', 'perf_tests', 'manual_tests', '.git'}
-TARGET = '//chromium_sdk:chromium_sdk'
+TARGET = '//libchromium:libchromium'
 
 _DISCOVER = r'''
 import argparse, json, sys
@@ -91,7 +91,7 @@ def notices(src, out, destination):
     components with their licences."""
     destination.mkdir(parents=True, exist_ok=True)
     shutil.copy2(Path(src)/'LICENSE', destination/'LICENSE.chromium')
-    shutil.copy2(REPO/'LICENSE', destination/'LICENSE.chromium-sdk')
+    shutil.copy2(REPO/'LICENSE', destination/'LICENSE.libchromium')
     subprocess.run([sys.executable, 'tools/licenses/licenses.py', 'credits', '--gn-target', TARGET,
                     '--gn-out-dir', os.path.relpath(out, src), str(destination/'CREDITS.html')],
                    cwd=src, check=True)
@@ -106,14 +106,14 @@ def notices(src, out, destination):
                        'credited_in': f'gaps/{slug(directory)}' if entry['files'] else None})
     (destination/'components.json').write_text(json.dumps(listed, indent=2, sort_keys=True)+'\n')
     (destination/'README').write_text(
-        'Notices for this Chromium SDK version.\n\n'
-        'LICENSE.chromium      Chromium\'s licence.\n'
-        'CREDITS.html          The licences of every third-party component the SDK\'s library and files link\n'
-        '                      or ship.\n'
-        'LICENSE.chromium-sdk  The licence of the scripts that built this version.\n'
-        'components.json       Each component, its licence, and whether its corresponding source is published\n'
-        '                      with this version (copyleft: true), as a source-<name> asset of the same release.\n'
-        'gaps/                 The licences of components Chromium\'s metadata leaves out of CREDITS.html.\n')
+        'Notices for this libchromium version.\n\n'
+        'LICENSE.chromium     Chromium\'s licence.\n'
+        'CREDITS.html         The licences of every third-party component the SDK\'s library and files link\n'
+        '                     or ship.\n'
+        'LICENSE.libchromium  The licence of the scripts that built this version.\n'
+        'components.json      Each component, its licence, and whether its corresponding source is published\n'
+        '                     with this version (copyleft: true), as a source-<name> asset of the same release.\n'
+        'gaps/                The licences of components Chromium\'s metadata leaves out of CREDITS.html.\n')
     return listed
 
 
@@ -152,7 +152,7 @@ def source_archives(src, out, output, version):
             for directory in dirs:
                 shutil.copytree(Path(src)/directory, Path(tmp)/directory, symlinks=True,
                                 ignore=lambda _, names: [n for n in names if n in UNBUILT])
-            asset = Path(output)/f'chromium-sdk-{version}-source-{slug(dirs[0])}.tar.zst'
+            asset = Path(output)/f'libchromium-{version}-source-{slug(dirs[0])}.tar.zst'
             archive.write(tmp, asset)
         written.append({'name': asset.name, 'part': 'source',
                         'component': ', '.join(sorted(m['name'] for m in members)),
@@ -270,7 +270,7 @@ def sysroot_sources(src, sysroots, cache, output, version, name):
                 shutil.copy2(cached, directory/file_name)
             listed.append({'source': source, 'version': version_, 'dsc': base+dsc_path})
         (Path(tmp)/'packages.json').write_text(json.dumps(listed, indent=2)+'\n')
-        asset = Path(output)/f'chromium-sdk-{version}-source-{name}.tar.zst'
+        asset = Path(output)/f'libchromium-{version}-source-{name}.tar.zst'
         # Debian's files are compressed already.
         archive.write(tmp, asset, level=3)
     return {'name': asset.name, 'part': 'source', 'component': name, 'license': 'Debian source packages',
@@ -291,13 +291,13 @@ def checksums(dsc_text):
 
 def sdk_source(output, version, commit='HEAD'):
     """This repository at the built commit: the settings, the patch and the scripts that built the version."""
-    asset = Path(output)/f'chromium-sdk-{version}-source-chromium-sdk.tar.zst'
+    asset = Path(output)/f'libchromium-{version}-source-libchromium.tar.zst'
     with tempfile.TemporaryDirectory() as tmp:
         tar = Path(tmp)/'repo.tar'
-        subprocess.run(['git', '-C', str(REPO), 'archive', '--format=tar', f'--prefix=chromium-sdk/', '-o', str(tar),
+        subprocess.run(['git', '-C', str(REPO), 'archive', '--format=tar', f'--prefix=libchromium/', '-o', str(tar),
                         commit], check=True)
         subprocess.run(['tar', '-xf', str(tar), '-C', tmp], check=True)
         tar.unlink()
         archive.write(tmp, asset)
-    return {'name': asset.name, 'part': 'source', 'component': 'chromium-sdk', 'license': 'MIT',
+    return {'name': asset.name, 'part': 'source', 'component': 'libchromium', 'license': 'MIT',
             'size': asset.stat().st_size}

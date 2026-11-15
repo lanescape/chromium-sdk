@@ -18,7 +18,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-EXECUTABLE = 'chromium-sdk-test-embedder'
+EXECUTABLE = 'libchromium-test-embedder'
 
 
 def expand(value, sdk, apple_sdk):

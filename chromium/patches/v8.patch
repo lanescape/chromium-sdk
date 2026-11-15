@@ -1,5 +1,5 @@
 diff --git a/BUILD.gn b/BUILD.gn
-index 8956a3dc357..fb3b07a4e1a 100644
+index 8956a3dc357..f720a786f20 100644
 --- a/BUILD.gn
 +++ b/BUILD.gn
 @@ -1361,7 +1361,8 @@ config("features") {
@@ -8,7 +8,7 @@ index 8956a3dc357..fb3b07a4e1a 100644
  
 -  if (v8_monolithic && v8_monolithic_for_shared_library) {
 +  if ((v8_monolithic && v8_monolithic_for_shared_library) ||
-+      (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
++      (defined(libchromium_exports) && libchromium_exports)) {
      defines += [ "V8_TLS_USED_IN_LIBRARY" ]
    }
  
@@ -17,7 +17,7 @@ index 8956a3dc357..fb3b07a4e1a 100644
    defines = []
  
 -  if (is_component_build) {
-+  if (is_component_build || (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
++  if (is_component_build || (defined(libchromium_exports) && libchromium_exports)) {
      defines = [ "BUILDING_V8_BASE_SHARED" ]
    }
  
@@ -26,12 +26,12 @@ index 8956a3dc357..fb3b07a4e1a 100644
    v8_remove_configs += [ "//build/config/compiler:thinlto_optimize_default" ]
  
 -  if (is_component_build) {
-+  if (is_component_build || (defined(chromium_sdk_exports) && chromium_sdk_exports)) {
++  if (is_component_build || (defined(libchromium_exports) && libchromium_exports)) {
      defines = [ "BUILDING_V8_PLATFORM_SHARED" ]
    }
  
 diff --git a/include/v8config.h b/include/v8config.h
-index b7aeeade6b8..ae5fb8889ed 100644
+index b7aeeade6b8..a0d7da7f1b6 100644
 --- a/include/v8config.h
 +++ b/include/v8config.h
 @@ -401,7 +401,7 @@ path. Add it with -I<path> to the command line
@@ -39,7 +39,7 @@ index b7aeeade6b8..ae5fb8889ed 100644
       || ((defined(__AARCH64EL__) || defined(_M_ARM64)) /* arm64, but ... */    \
           && !defined(_WIN32)))                         /* not on windows */    \
 -     && !defined(COMPONENT_BUILD)                      /* no component build */\
-+     && !(defined(COMPONENT_BUILD) || defined(CHROMIUM_SDK_EXPORTS))                      /* no component build */\
++     && !(defined(COMPONENT_BUILD) || defined(LIBCHROMIUM_EXPORTS))                      /* no component build */\
       && __clang_major__ >= 17                          /* clang >= 17 */
  # define V8_HAS_ATTRIBUTE_PRESERVE_MOST (__has_attribute(preserve_most))
  #endif

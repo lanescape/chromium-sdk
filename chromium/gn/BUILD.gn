@@ -1,4 +1,4 @@
-# The SDK's targets, which sdk.py links into Chromium's tree as //chromium_sdk (specs/0002-build.md). Chromium's
+# The SDK's targets, which sdk.py links into Chromium's tree as //libchromium (specs/0002-build.md). Chromium's
 # own targets are untouched: this only collects them into one shared library, its resources and the flags an
 # embedder compiles with.
 
@@ -7,7 +7,7 @@ import("//build/config/ui.gni")
 import("//tools/grit/repack.gni")
 import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
 
-assert(chromium_sdk_exports, "set chromium_sdk_exports = true (chromium/args.gn)")
+assert(libchromium_exports, "set libchromium_exports = true (chromium/args.gn)")
 assert(!is_component_build, "the SDK links Chromium into one shared library")
 
 # What the library exports, with everything these reach. A component build's exports between these targets'
@@ -135,14 +135,14 @@ repack("resources") {
     "//ui/resources",
     "//ui/webui/resources",
   ]
-  output = "$root_out_dir/chromium_sdk/resources.pak"
+  output = "$root_out_dir/libchromium/resources.pak"
 }
 
 # Strings, one pack for each locale Chromium ships.
 repack_locales("locales") {
   input_locales = platform_pak_locales
   output_locales = platform_pak_locales
-  output_dir = "$root_out_dir/chromium_sdk/locales"
+  output_dir = "$root_out_dir/libchromium/locales"
   source_patterns = [
     "$root_gen_dir/third_party/blink/public/strings/blink_strings_",
     "$root_gen_dir/third_party/blink/public/strings/permission_element_strings_",
@@ -161,7 +161,7 @@ repack_locales("locales") {
   ]
 }
 
-group("chromium_sdk") {
+group("libchromium") {
   deps = [
     ":chromium",
     ":embedder_probe",
