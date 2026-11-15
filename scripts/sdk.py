@@ -39,6 +39,15 @@ def env():
     environment = dict(os.environ)
     environment['PATH'] = os.pathsep.join((str(depot_tools()), environment['PATH']))
     environment.update(DEPOT_TOOLS_UPDATE='0', DEPOT_TOOLS_METRICS='0', GCLIENT_SUPPRESS_GIT_VERSION_WARNING='1')
+    # Chromium's dependencies in Cloud Storage are public, and read without
+    # signing in. depot_tools' gsutil.py otherwise runs gsutil inside
+    # `luci-auth context`, which on a Compute Engine machine signs in as the
+    # machine's own account, and Cloud Storage refuses that account's narrow
+    # scopes rather than reading anonymously. SWARMING_HEADLESS, which only
+    # gsutil.py reads, makes it run gsutil directly, and an empty boto
+    # configuration, in place of /etc/boto.cfg and ~/.boto, gives gsutil no
+    # credentials of its own.
+    environment.update(SWARMING_HEADLESS='1', BOTO_CONFIG=os.devnull)
     return environment
 
 

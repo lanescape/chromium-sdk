@@ -137,5 +137,15 @@ class Patch(unittest.TestCase):
         self.assertEqual((self.src/'a.h').read_text(), 'a\n')
 
 
+class Environment(unittest.TestCase):
+    """What Chromium's tools run with."""
+
+    def test_public_storage_is_read_without_signing_in(self):
+        environment = sdk.env()
+        self.assertEqual(environment['BOTO_CONFIG'], os.devnull)
+        self.assertEqual(environment['SWARMING_HEADLESS'], '1')
+
+
 if __name__ == '__main__':
     unittest.main()
+
