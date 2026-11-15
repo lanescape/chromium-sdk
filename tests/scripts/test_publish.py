@@ -91,6 +91,63 @@ class Manifest(unittest.TestCase):
                 publish.gather(tmp/'out2', [tmp/'one', tmp/'three'])
 
 
+class IsPublic(unittest.TestCase):
+    """is_public() asks with HEAD and no credentials, and retries only what may pass on a second try."""
+
+    def answers(self, *outcomes):
+        requests = []
+        outcomes = list(outcomes)
+
+        class Response:
+            def __init__(self, status):
+                self.status = status
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        def urlopen(request, timeout=None):
+            requests.append(request)
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return Response(outcome)
+
+        saved = publish.urllib.request.urlopen, publish.time.sleep
+        publish.urllib.request.urlopen, publish.time.sleep = urlopen, lambda _: None
+        self.addCleanup(setattr, publish.time, 'sleep', saved[1])
+        self.addCleanup(setattr, publish.urllib.request, 'urlopen', saved[0])
+        return requests
+
+    @staticmethod
+    def http_error(code):
+        return publish.urllib.error.HTTPError('https://example.invalid/x', code, 'x', {}, None)
+
+    def test_head_without_credentials(self):
+        requests = self.answers(200)
+        self.assertTrue(publish.is_public('https://example.invalid/x'))
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].get_method(), 'HEAD')
+        self.assertFalse(any(name.lower() == 'authorization' for name, _ in requests[0].header_items()))
+
+    def test_missing_is_not_retried(self):
+        requests = self.answers(self.http_error(404))
+        self.assertFalse(publish.is_public('https://example.invalid/x'))
+        self.assertEqual(len(requests), 1)
+
+    def test_server_and_network_failures_are_retried(self):
+        requests = self.answers(self.http_error(503), OSError('reset'), 200)
+        self.assertTrue(publish.is_public('https://example.invalid/x'))
+        self.assertEqual(len(requests), 3)
+
+    def test_gives_up_after_three_tries(self):
+        requests = self.answers(self.http_error(503), OSError('reset'), self.http_error(500))
+        self.assertFalse(publish.is_public('https://example.invalid/x'))
+        self.assertEqual(len(requests), 3)
+
+
 class FakeGitHub:
     """Records what release() asks of GitHub."""
 
