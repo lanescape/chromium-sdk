@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -5,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.scripts.common import REPO  # noqa: F401
+from tests.scripts.common import REPO
 import sdk
 
 
@@ -14,8 +15,8 @@ def git(path, *args):
                           stderr=subprocess.DEVNULL).stdout
 
 
-class Patch(unittest.TestCase):
-    """step_patch on a checkout of two repositories, src and src/v8, through the states a kept disk can be in."""
+class Checkout(unittest.TestCase):
+    """A checkout of two repositories, src and src/v8, and this repository's patches for them."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -64,6 +65,10 @@ class Patch(unittest.TestCase):
 
     def patch(self):
         sdk.step_patch('linux-amd64', None)
+
+
+class Patch(Checkout):
+    """step_patch through the states a kept checkout can be in."""
 
     def test_applies_once(self):
         self.write_patches('A\n')
@@ -135,6 +140,140 @@ class Patch(unittest.TestCase):
         self.assertEqual((self.src/'v8/c.h').read_text(), 'c\n')
         sdk.unpatch(self.src)
         self.assertEqual((self.src/'a.h').read_text(), 'a\n')
+
+
+class Reconcile(Checkout):
+    """step_reconcile on a build directory restored apart from its checkout, as CI's caches are."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.copy(REPO/'targets.json', self.repo/'targets.json')
+        self.checkout = self.src.parent
+        self.synced({'pin': {'tag': '1.0.0.0', 'commit': 'a'*40}, 'gclient': 'g'})
+        self.write_patches('A\n')
+        self.patch()
+        self.old = 1_000_000_000_000_000_000
+        for path in (self.src/'a.h', self.src/'b.h', self.src/'v8/c.h', self.src/'libchromium/BUILD.gn'):
+            os.utime(path, ns=(self.old, self.old))
+
+    def synced(self, record):
+        (self.checkout/'.libchromium-checkout.json').write_text(json.dumps(record)+'\n')
+
+    def build(self, target='linux-amd64', record=None):
+        """A build directory built from the checkout as it is now, or with the record given."""
+        out = sdk.out_dir(target)
+        out.mkdir(parents=True, exist_ok=True)
+        (out/'obj.o').write_text('')
+        (out/sdk.BUILT_FROM).write_text(json.dumps(record if record is not None else sdk.built_from(target)))
+        return out
+
+    def reconcile(self, target='linux-amd64'):
+        sdk.step_reconcile(target, None)
+
+    def touched(self):
+        return sorted(path.relative_to(self.src).as_posix()
+                      for path in (self.src/'a.h', self.src/'b.h', self.src/'v8/c.h', self.src/'libchromium/BUILD.gn')
+                      if path.stat().st_mtime_ns != self.old)
+
+    def test_the_same_checkout_is_left_alone(self):
+        out = self.build()
+        self.reconcile()
+        self.assertTrue((out/'obj.o').exists())
+        self.assertEqual(self.touched(), [])
+
+    def test_no_build_directory(self):
+        self.reconcile()
+        self.assertFalse(sdk.out_dir('linux-amd64').exists())
+
+    def test_another_patch_rebuilds_the_files_either_patch_changes(self):
+        # Built with src's patch changing b.h; the checkout's changes a.h. v8's patch is the same.
+        self.write_patches('a\n')
+        (self.src/'b.h').write_text('B\n')
+        (self.repo/'chromium/patches/src.patch').write_text(git(self.src, 'diff', '--', 'b.h'))
+        (self.src/'b.h').write_text('b\n')
+        self.patch()
+        out = self.build()
+        self.assertEqual(sdk.checkout_state()['patches']['']['files'], ['b.h'])
+        # src's new patch changes a.h alone.
+        sdk.unpatch(self.src)
+        (self.src/'a.h').write_text('A\n')
+        (self.repo/'chromium/patches/src.patch').write_text(git(self.src, 'diff', '--', 'a.h'))
+        (self.src/'a.h').write_text('a\n')
+        self.patch()
+        self.assertEqual(sdk.checkout_state()['patches']['']['files'], ['a.h'])
+        self.assertEqual((self.src/'b.h').read_text(), 'b\n')
+        for path in (self.src/'a.h', self.src/'b.h', self.src/'v8/c.h'):
+            os.utime(path, ns=(self.old, self.old))
+        self.reconcile()
+        self.assertTrue((out/'obj.o').exists())
+        self.assertEqual(self.touched(), ['a.h', 'b.h'])
+
+    def test_another_gn_target_rebuilds_it(self):
+        out = self.build()
+        (self.src/'libchromium/BUILD.gn').write_text('# other\n')
+        os.utime(self.src/'libchromium/BUILD.gn', ns=(self.old, self.old))
+        self.reconcile()
+        self.assertTrue((out/'obj.o').exists())
+        self.assertEqual(self.touched(), ['libchromium/BUILD.gn'])
+
+    def test_another_pin_builds_afresh(self):
+        out = self.build()
+        self.synced({'pin': {'tag': '2.0.0.0', 'commit': 'b'*40}, 'gclient': 'g'})
+        self.reconcile()
+        self.assertFalse(out.exists())
+        self.assertEqual(self.touched(), [])
+
+    def test_a_checkout_that_is_not_whole_builds_afresh(self):
+        out = self.build()
+        (self.checkout/'.libchromium-checkout.json').unlink()
+        self.reconcile()
+        self.assertFalse(out.exists())
+
+    def test_a_build_directory_without_a_record_builds_afresh(self):
+        out = self.build()
+        (out/sdk.BUILT_FROM).unlink()
+        self.reconcile()
+        self.assertFalse(out.exists())
+
+    def test_a_record_naming_files_outside_the_checkout_builds_afresh(self):
+        record = sdk.built_from('linux-amd64')
+        record['checkout']['patches']['']['files'] = ['../../outside']
+        record['checkout']['patches']['']['sha256'] = 'other'
+        outside = self.src.parent.parent/'outside'
+        outside.write_text('')
+        os.utime(outside, ns=(self.old, self.old))
+        out = self.build(record=record)
+        self.reconcile()
+        self.assertFalse(out.exists())
+        self.assertEqual(outside.stat().st_mtime_ns, self.old)
+
+    def test_macos_built_with_another_apple_sdk_builds_afresh(self):
+        marker = sdk.apple_sdk_marker()
+        marker.parent.mkdir(parents=True)
+        pinned = sdk.target_entry('macos-arm64')['mac_sdk']['sha256']
+        for installed, kept in (('0'*64, False), (pinned, True)):
+            with self.subTest(installed=installed):
+                marker.write_text(installed)
+                out = self.build('macos-arm64')
+                # A restored checkout never holds the Apple SDK: mac-sdk installs the pinned one after.
+                marker.unlink()
+                self.reconcile('macos-arm64')
+                self.assertEqual(out.exists(), kept)
+
+    def test_configure_records_what_the_build_directory_is_built_from(self):
+        (self.repo/'chromium/args.gn').write_text('is_debug = false\n')
+        ran = []
+        saved = sdk.run
+        sdk.run = lambda *command, **kwargs: ran.append(command)
+        try:
+            sdk.step_configure('linux-amd64', None)
+        finally:
+            sdk.run = saved
+        self.assertEqual(ran[0][:2], ('gn', 'gen'))
+        out = sdk.out_dir('linux-amd64')
+        self.assertEqual(json.loads((out/sdk.BUILT_FROM).read_text()), sdk.built_from('linux-amd64'))
+        self.reconcile()
+        self.assertEqual(self.touched(), [])
 
 
 class Environment(unittest.TestCase):

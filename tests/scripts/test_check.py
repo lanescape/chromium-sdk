@@ -1,3 +1,4 @@
+import json
 import shutil
 import tempfile
 import unittest
@@ -324,6 +325,215 @@ class WorkflowShape(unittest.TestCase):
                 self.setUp()
                 self.edit(f'.github/workflows/{workflow}', old, new)
                 self.assertIn(f'.github/workflows/{workflow}: {problem}', self.problems())
+
+    def test_only_linux_amd64_saves_the_checkout(self):
+        saves = '        uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1\n        with:\n'
+        for old, new in (
+                ("      - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n",
+                 '      - if: "!endsWith(steps.restored.outputs.checkout, \'_exact\')"\n'),
+                ("      - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n",
+                 "      - if: inputs.target != 'macos-arm64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n"),
+                (f"""{saves}          name: chromium-checkout
+          path: /work
+""", f"""{saves}          name: chromium-checkout
+          path: /work/chromium
+"""),
+                ("""            .libchromium-restored
+            chromium/src/out
+""", """            .libchromium-restored
+"""),
+                (f"""{saves}          name: chromium-checkout
+          path: /work
+""", f"""{saves}          name: 'chromium-checkout'
+          path: /work
+""")):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/target.yml', old, new)
+                self.assertTrue(any('only linux-amd64 saves the checkout' in p for p in self.problems()))
+
+    def test_the_build_directory_is_saved_alone(self):
+        self.edit('.github/workflows/target.yml', """          name: chromium-out-${{ inputs.target }}
+          path: /work/chromium/src/out/${{ inputs.target }}
+      - if: inputs.target == 'linux-amd64'""", """          name: chromium-out-${{ inputs.target }}
+          path: /work/chromium
+      - if: inputs.target == 'linux-amd64'""")
+        self.assertTrue(any('save the build directory alone' in p for p in self.problems()))
+
+    def test_the_build_directory_is_saved_every_time(self):
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        with:
+          name: chromium-out-${{ inputs.target }}""", """      - if: inputs.target == 'linux-amd64'
+        uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        with:
+          name: chromium-out-${{ inputs.target }}""")
+        self.assertTrue(any('save the build directory alone, whole, every time' in p for p in self.problems()))
+
+    def test_the_build_directory_is_saved_whole(self):
+        self.edit('.github/workflows/target.yml', """          path: /work/chromium/src/out/${{ inputs.target }}
+      - if: inputs.target == 'linux-amd64'""", """          path: /work/chromium/src/out/${{ inputs.target }}
+          exclude: .libchromium-built-from.json
+      - if: inputs.target == 'linux-amd64'""")
+        self.assertTrue(any('save the build directory alone, whole, every time' in p for p in self.problems()))
+
+    def test_a_script_s_text_is_no_step(self):
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        with:
+          name: chromium-out-${{ inputs.target }}
+          path: /work/chromium/src/out/${{ inputs.target }}
+""", """      - run: |
+          cat <<'EOF'
+          - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+            with:
+              name: chromium-out-${{ inputs.target }}
+              path: /work/chromium/src/out/${{ inputs.target }}
+          EOF
+""")
+        self.assertIn('.github/workflows/target.yml: its build must save the build directory once and the checkout '
+                      'once', self.problems())
+
+    def test_a_script_s_text_is_no_upload(self):
+        self.edit('.github/workflows/target.yml', """      - name: Run the test embedder
+""", """      - run: |
+          cat <<'EOF'
+          - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          EOF
+      - name: Run the test embedder
+""")
+        self.assertEqual(self.problems(), [])
+
+    def test_both_caches_are_saved(self):
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        with:
+          name: chromium-out-${{ inputs.target }}
+          path: /work/chromium/src/out/${{ inputs.target }}
+""", '')
+        self.assertIn('.github/workflows/target.yml: its build must save the build directory once and the checkout '
+                      'once', self.problems())
+
+    def test_the_checkout_s_exclusions_are_a_literal_block_in_its_with(self):
+        excludes = """          exclude: |
+            lost+found
+            .libchromium-restored
+            chromium/src/out
+"""
+        for new in ('          exclude: >\n            lost+found\n            .libchromium-restored\n'
+                    '            chromium/src/out\n',
+                    '        env:\n' + excludes.replace('          ', '          ', 1)):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/target.yml', excludes, new)
+                self.assertTrue(any('only linux-amd64 saves the checkout' in p for p in self.problems()))
+
+    def test_only_the_build_has_a_disk_and_caches(self):
+        self.edit('.github/workflows/target.yml', """    needs: build
+    runs-on: lanescape-16vcpu-linux-amd64
+    steps:
+""", """    needs: build
+    runs-on: lanescape-16vcpu-linux-amd64
+    steps:
+      - uses: lanescape/actions/cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        with:
+          name: chromium-checkout
+          path: /work
+""")
+        self.assertTrue(any("only target.yml's build has a work disk and caches" in p for p in self.problems()))
+
+    def test_no_disk_is_saved(self):
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@""",
+                  """      - uses: lanescape/actions/save-disk@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+      - uses: lanescape/actions/save-cache@""")
+        self.assertTrue(any('the runner service keeps no disks' in p for p in self.problems()))
+
+    def test_the_disk_takes_no_inputs(self):
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/disk@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+""", """      - uses: lanescape/actions/disk@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        with:
+          family: ${{ inputs.target }}
+""")
+        self.assertTrue(any('the disk action takes no inputs' in p for p in self.problems()))
+
+
+class Caches(unittest.TestCase):
+    """scripts/check.py's rules for .github/runners.json's caches (specs/0003-ci-cd.md, Caches)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        for path in ('.github/runners.json', 'targets.json', 'scripts/sdk.py', 'chromium'):
+            source, copy = REPO/path, self.repo/path
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, copy)
+            else:
+                shutil.copy(source, copy)
+        self.runners = json.loads((self.repo/'.github/runners.json').read_text())
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def problems(self):
+        (self.repo/'.github/runners.json').write_text(json.dumps(self.runners))
+        return check.cache_problems(self.repo)
+
+    def test_the_repository_passes(self):
+        self.assertEqual(self.problems(), [])
+
+    def test_disks_are_refused(self):
+        self.runners['disks'] = {'linux-amd64': {}}
+        self.assertIn('.github/runners.json: the runner service keeps no disks; declare "caches"', self.problems())
+
+    def test_unknown_fields_are_refused(self):
+        self.runners['images'] = {}
+        self.assertIn('.github/runners.json has fields the runner service refuses', self.problems())
+
+    def test_every_target_has_a_build_directory_cache(self):
+        del self.runners['caches']['chromium-out-linux-arm64']
+        self.assertIn('.github/runners.json must declare chromium-checkout and one chromium-out-<target> for each '
+                      'target in targets.json, and no other caches', self.problems())
+
+    def test_no_other_caches(self):
+        self.runners['caches']['debian'] = {}
+        self.assertTrue(any('and no other caches' in p for p in self.problems()))
+
+    def test_names_are_the_service_s(self):
+        for name in ('Chromium', '1chromium', 'chromium-', 'c'*33):
+            with self.subTest(name=name):
+                self.runners['caches'] = {name: {}}
+                self.assertTrue(any(f'{name} is not a cache name' in p for p in self.problems()))
+
+    def test_the_checkout_is_keyed_by_its_files_alone(self):
+        for change in ('chromium/args.gn', None):
+            with self.subTest(change=change):
+                listed = self.runners['caches']['chromium-checkout']['from']
+                if change:
+                    listed.append(change)
+                else:
+                    listed.remove('chromium/patches/v8.patch')
+                self.assertTrue(any(p.startswith('.github/runners.json: chromium-checkout must be keyed by exactly '
+                                                 'chromium/gclient, chromium/patches/src.patch')
+                                    for p in self.problems()))
+                self.tearDown()
+                self.setUp()
+
+    def test_a_new_patch_keys_both(self):
+        (self.repo/'chromium/patches/third_party/skia.patch').write_text('')
+        found = self.problems()
+        for name in ('chromium-checkout', 'chromium-out-macos-arm64'):
+            self.assertTrue(any(p.startswith(f'.github/runners.json: {name} must be keyed by exactly')
+                                and 'chromium/patches/third_party/skia.patch' in p for p in found))
+
+    def test_a_build_directory_is_keyed_by_everything_its_build_compiles(self):
+        self.runners['caches']['chromium-out-linux-amd64']['from'].remove('scripts/sdk.py')
+        self.assertTrue(any(p.startswith('.github/runners.json: chromium-out-linux-amd64 must be keyed by exactly')
+                            for p in self.problems()))
+
+    def test_every_listed_path_exists(self):
+        (self.repo/'chromium/gn/embedder_probe_mac.mm').unlink()
+        self.assertIn('.github/runners.json: chromium-out-linux-amd64 names chromium/gn/embedder_probe_mac.mm, which '
+                      'does not exist', self.problems())
 
 
 if __name__ == '__main__':

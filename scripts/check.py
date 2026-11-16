@@ -71,6 +71,21 @@ def yaml_subset_problems(path, relative):
     return found
 
 
+def in_block_scalars(lines):
+    """The indexes of lines that are a block scalar's text, such as a step's script, which is never YAML."""
+    inside, block = set(), None
+    for index, line in enumerate(lines):
+        if block is not None:
+            if not line.strip() or len(line) - len(line.lstrip(' ')) > block:
+                inside.add(index)
+                continue
+            block = None
+        key = KEY_LINE.fullmatch(line)
+        if key and re.fullmatch(r'[|>][-+]?(\s+#.*)?', key.group(4) or ''):
+            block = len(key.group(1)) + len(key.group(2) or '')
+    return inside
+
+
 def step_lines(lines, index):
     """The lines of the sequence item, such as a step, that holds lines[index]: from its `- ` up to the next item or
     the end of its sequence."""
@@ -140,6 +155,62 @@ def top_level(path, key):
     """A workflow's top-level key's value as written on its line, or None if it has none."""
     values = re.findall(rf'^{key}:[ \t]*(.*?)\s*$', path.read_text(), re.M)
     return values[0] if values else None
+
+
+SAVES_CHECKOUT = "if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')"
+CHECKOUT_EXCLUDES = {'lost+found', '.libchromium-restored', 'chromium/src/out'}
+
+
+def block_lines(step, key):
+    """The lines of a literal block scalar, `|`, under `key:` directly in a step's `with`, stripped; a folded one,
+    `>`, would join them into one."""
+    dash = step[0].index('-')
+    found, inside, column = [], False, None
+    for line in step[1:]:
+        indent = len(line) - len(line.lstrip(' '))
+        if column is not None:
+            if line.strip() and indent <= column:
+                break
+            if line.strip():
+                found.append(line.strip())
+        elif line.strip() and indent <= dash + 2:
+            inside = indent == dash + 2 and line.strip() == 'with:'
+        elif inside and indent == dash + 4 and re.fullmatch(rf' *{re.escape(key)}: *\|[-+]?', line):
+            column = indent
+    return found
+
+
+def service_step_problems(relative, number, lines, job, action, saves):
+    """The runner service's work disk and caches (specs/0003-ci-cd.md, Caches): only target.yml's build has them,
+    and only linux-amd64 saves the checkout, once for each key, so no cache ever holds the Apple SDK, which the
+    macOS build puts in its checkout."""
+    found = []
+    step = step_lines(lines, number - 1)
+    given = step_keys(step, 'with')
+    if action not in ('disk', 'cache', 'save-cache'):
+        return [f'{relative}:{number}: the runner service keeps no disks; use lanescape/actions\' disk, cache and '
+                'save-cache']
+    if relative != '.github/workflows/target.yml' or job != 'build':
+        return [f'{relative}:{number}: only target.yml\'s build has a work disk and caches']
+    if action == 'disk' and given:
+        found.append(f'{relative}:{number}: the disk action takes no inputs')
+    if action == 'save-cache' and 'name: chromium-out-${{ inputs.target }}' in given:
+        saves.append('chromium-out')
+        if sorted(given) != ['name: chromium-out-${{ inputs.target }}',
+                             'path: /work/chromium/src/out/${{ inputs.target }}'] or \
+                any(key.startswith('if:') for key in step_keys(step)):
+            found.append(f'{relative}:{number}: save the build directory alone, whole, every time, '
+                         'from /work/chromium/src/out/${{ inputs.target }}')
+    elif action == 'save-cache':
+        saves.append('chromium-checkout')
+        # Anything else it saves is the checkout, as below.
+        conditions = [key for key in step_keys(step) if key.startswith('if:')]
+        if conditions != [SAVES_CHECKOUT] or 'name: chromium-checkout' not in given or 'path: /work' not in given or \
+                set(block_lines(step, 'exclude')) != CHECKOUT_EXCLUDES:
+            found.append(f'{relative}:{number}: only linux-amd64 saves the checkout, from /work, when it wasn\'t '
+                         f'restored for its key, {SAVES_CHECKOUT}, leaving out exactly '
+                         + ', '.join(sorted(CHECKOUT_EXCLUDES)))
+    return found
 
 
 def workflow_problems(repo):
@@ -240,9 +311,11 @@ def workflow_problems(repo):
                                                      for target, entry in targets.items()}:
         found.append('.github/workflows/target.yml: the test must run on targets.json\'s test_runner for its target')
 
+    saves = []
     for path in sorted((repo/'.github').glob('**/*.yml')):
         relative = path.relative_to(repo).as_posix()
         lines = path.read_text().splitlines()
+        scripts = in_block_scalars(lines)
         for number, line in enumerate(lines, 1):
             if line.strip().startswith('#'):
                 continue
@@ -252,22 +325,68 @@ def workflow_problems(repo):
                                                                      '.github/workflows/cd.yml'):
                 found.append(f'{relative}:{number}: only ci.yml\'s and cd.yml\'s macOS calls of target.yml may grant '
                              'id-token')
-            match = USES.match(line)
+            # A script's text is never a step.
+            match = USES.match(line) if number - 1 not in scripts else None
             if match and match.group(1).startswith('actions/upload-artifact@'):
                 # Artifacts are intermediate and kept a day (specs/0003-ci-cd.md, CI).
                 given = step_keys(step_lines(lines, number - 1), 'with')
                 if [key for key in given if key.startswith('retention-days:')] != ['retention-days: 1']:
                     found.append(f'{relative}:{number}: keep the artifact for 1 day, `retention-days: 1`')
-            if match and match.group(1) == './.github/actions/apple-sdk':
+            if not match:
+                continue
+            job = next((heading.group(1) for heading in (re.fullmatch(r'  ([A-Za-z0-9_-]+):\s*', other)
+                                                              for other in reversed(lines[:number-1]))
+                        if heading), None)
+            service = re.fullmatch(r'lanescape/actions/([a-z-]+)@.*', match.group(1))
+            if service and service.group(1) != 'checkout':
+                found += service_step_problems(relative, number, lines, job, service.group(1), saves)
+            if match.group(1) == './.github/actions/apple-sdk':
                 # In its own step, guarded by its own condition, in a job its call's grant reaches.
-                job = next((heading.group(1) for heading in (re.fullmatch(r'  ([A-Za-z0-9_-]+):\s*', other)
-                                                                  for other in reversed(lines[:number-1]))
-                            if heading), None)
                 guarded = [key for key in step_keys(step_lines(lines, number - 1)) if key.startswith('if:')]
                 if relative != '.github/workflows/target.yml' or job not in ('build', 'embedder') or \
                         guarded != ["if: inputs.target == 'macos-arm64'"]:
                     found.append(f'{relative}:{number}: only target.yml\'s build and embedder may fetch the Apple SDK, '
                                  'and only for macos-arm64')
+    if sorted(saves) != ['chromium-checkout', 'chromium-out']:
+        found.append('.github/workflows/target.yml: its build must save the build directory once and the checkout once')
+    return found
+
+
+CACHE_NAME = re.compile(r'[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?')
+
+
+def cache_problems(repo):
+    """.github/runners.json's caches (specs/0003-ci-cd.md, Caches): the checkout, keyed by what decides its files,
+    and each target's build directory, keyed by everything that decides what its build compiles."""
+    found = []
+    targets = json.loads((repo/'targets.json').read_text())
+    runners = json.loads((repo/'.github/runners.json').read_text())
+    if 'disks' in runners:
+        found.append('.github/runners.json: the runner service keeps no disks; declare "caches"')
+    if set(runners) - {'caches', 'branches'}:
+        found.append('.github/runners.json has fields the runner service refuses')
+    caches = runners.get('caches', {})
+    for name in caches:
+        if not CACHE_NAME.fullmatch(name):
+            found.append(f'.github/runners.json: {name} is not a cache name: 1 to 32 of a-z, 0-9 and -, starting with '
+                         'a letter and not ending with -')
+    if set(caches) != {'chromium-checkout', *(f'chromium-out-{target}' for target in targets)}:
+        found.append('.github/runners.json must declare chromium-checkout and one chromium-out-<target> for each '
+                     'target in targets.json, and no other caches')
+    patches = sorted(p.relative_to(repo).as_posix() for p in (repo/'chromium/patches').glob('**/*.patch'))
+    gn = sorted(p.relative_to(repo).as_posix() for p in (repo/'chromium/gn').iterdir())
+    # The checkout's files: the pin, .gclient, and the patches, which it's saved with.
+    checkout = sorted({'chromium/pin.json', 'chromium/gclient', *patches})
+    # Everything that decides what a target's build compiles: its settings, sources, patch and arguments.
+    out = sorted({*checkout, 'chromium/args.gn', 'targets.json', 'scripts/sdk.py', *gn})
+    for name, declaration in caches.items():
+        listed = declaration.get('from', []) if isinstance(declaration, dict) else []
+        for path in listed:
+            if not (repo/path).is_file():
+                found.append(f'.github/runners.json: {name} names {path}, which does not exist')
+        keyed = checkout if name == 'chromium-checkout' else out
+        if sorted(listed) != keyed:
+            found.append(f'.github/runners.json: {name} must be keyed by exactly {", ".join(keyed)}')
     return found
 
 
@@ -286,24 +405,7 @@ def problems():
         found.append('chromium/pin.json: the commit is not a full hash')
 
     targets = json.loads((REPO/'targets.json').read_text())
-    runners = json.loads((REPO/'.github/runners.json').read_text())
-    if set(runners) - {'disks', 'branches'}:
-        found.append('.github/runners.json has fields the runner service refuses')
-    disks = runners.get('disks', {})
-    if set(disks) != set(targets):
-        found.append('.github/runners.json must declare one disk family for each target in targets.json')
-    patches = sorted(p.relative_to(REPO).as_posix() for p in (REPO/'chromium/patches').glob('**/*.patch'))
-    gn = sorted(p.relative_to(REPO).as_posix() for p in (REPO/'chromium/gn').iterdir())
-    # Everything that decides what a target's build compiles: its settings, sources, patch and arguments.
-    keyed = sorted({'chromium/pin.json', 'chromium/gclient', 'chromium/args.gn', 'targets.json', 'scripts/sdk.py',
-                    *gn, *patches})
-    for family, declaration in disks.items():
-        listed = declaration.get('from', [])
-        for path in listed:
-            if not (REPO/path).is_file():
-                found.append(f'.github/runners.json: {family} names {path}, which does not exist')
-        if sorted(listed) != keyed:
-            found.append(f'.github/runners.json: {family} must be keyed by exactly {", ".join(keyed)}')
+    found += cache_problems(REPO)
 
     # The workflows fetch the Apple SDK that targets.json pins, from the bucket's fixed layout.
     action = (REPO/'.github/actions/apple-sdk/action.yml').read_text()

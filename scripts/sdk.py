@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Builds the SDK for one target: sdk.py <step> <target> [options] (specs/0002-build.md).
 
-Steps, in order: checkout, packages, mac-sdk (macOS only), patch, configure, build, package, and for a release, sources. Each is safe to run again on a
-kept disk, such as one restored or resumed by the runner service: it does nothing when its work is done, and a
-build carries on from what ninja finds. The checkout is at $LIBCHROMIUM_CHECKOUT, or ~/libchromium/checkout.
+Steps, in order: checkout, packages, mac-sdk (macOS only), patch, configure, build, package, and for a release,
+sources. Each is safe to run again on a kept checkout, such as one restored from a cache or resumed by the runner
+service: it does nothing when its work is done, and a build carries on from what Siso finds. CI runs reconcile first,
+after restoring the checkout and the build directory, which it keeps apart. The checkout is at $LIBCHROMIUM_CHECKOUT,
+or ~/libchromium/checkout.
 """
 import argparse
 import hashlib
@@ -15,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -25,6 +28,7 @@ CHROMIUM_URL = 'https://chromium.googlesource.com/chromium/src.git'
 HERMETIC_XCODE = 'build/mac_files/xcode_binaries'
 APPLE_SDK_IN_XCODE = 'Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk'
 GN_DIR = 'libchromium'
+BUILT_FROM = '.libchromium-built-from.json'
 
 
 def checkout_root():
@@ -188,7 +192,7 @@ def step_checkout(target, args):
 
 def step_packages(target, args):
     """Chromium's Linux build dependencies, from its own list. Not stamped: they live on the machine, which may be
-    new, while the checkout lives on a kept disk."""
+    new, while the checkout is kept."""
     if platform.system() != 'Linux':
         return
     script = checkout_root()/'src/build/install-build-deps.sh'
@@ -212,7 +216,7 @@ def step_mac_sdk(target, args):
         return
     # Where Chromium looks for a hermetic Xcode, or for an embedder's build, wherever it's asked.
     destination = Path(args.destination) if args.destination else checkout_root()/'src'/HERMETIC_XCODE
-    marker = destination/'.libchromium-apple-sdk'
+    marker = destination/apple_sdk_marker().name
     if marker.is_file() and marker.read_text() == entry['sha256']:
         print('mac-sdk: the pinned SDK is in place', flush=True)
         return
@@ -346,6 +350,98 @@ def record(repo, patch):
     os.replace(partial, copy)
 
 
+# reconcile
+
+def checkout_state():
+    """What a build directory built in the checkout is built from, as the checkout's own records say: the pin and
+    .gclient it was synced to, each patch applied, with the files it changes, and the GN target's copy. None if the
+    checkout isn't whole. The same state means the same files, whatever their times."""
+    try:
+        synced = json.loads(checkout_record().read_text())
+    except (OSError, ValueError):
+        return None
+    patches = {}
+    if applied_dir().exists():
+        for path, repo in patch_files(applied_dir()):
+            patches[repo] = {'sha256': sha256(path),
+                             'files': [f'{repo}/{name}' if repo else name for name in patched_files(path)]}
+    sdk_gn = checkout_root()/'src'/GN_DIR
+    gn = {path.name: sha256(path) for path in sorted(sdk_gn.iterdir()) if path.is_file()} if sdk_gn.is_dir() else {}
+    return {'synced': synced, 'patches': patches, 'gn': gn}
+
+
+def apple_sdk_marker():
+    return checkout_root()/'src'/HERMETIC_XCODE/'.libchromium-apple-sdk'
+
+
+def built_from(target):
+    """The record configure keeps in the build directory: the checkout's state, and for macOS the Apple SDK, which
+    is installed in the checkout but never kept with it, so reconcile compares it with the pin instead."""
+    marker = apple_sdk_marker()
+    sdk_pin = marker.read_text() if target_entry(target).get('mac_sdk') and marker.is_file() else None
+    return {'checkout': checkout_state(), 'apple_sdk': sdk_pin}
+
+
+def well_formed_record(record):
+    """Whether a build directory's record is one built_from wrote, with plain relative paths alone."""
+    def relative(name):
+        return isinstance(name, str) and name and not name.startswith('/') and \
+            all(part not in ('', '.', '..') for part in name.split('/'))
+    try:
+        built = record['checkout']
+        return isinstance(record, dict) and (record['apple_sdk'] is None or isinstance(record['apple_sdk'], str)) \
+            and isinstance(built['synced'], dict) and isinstance(built['gn'], dict) and \
+            all(relative(name) for name in built['gn']) and isinstance(built['patches'], dict) and \
+            all(isinstance(patch['sha256'], str) and isinstance(patch['files'], list) and
+                all(relative(name) for name in patch['files']) for patch in built['patches'].values())
+    except (TypeError, KeyError, AttributeError):
+        return False
+
+
+def step_reconcile(target, args):
+    """CI keeps the checkout and the target's build directory as caches of their own, restored apart
+    (specs/0003-ci-cd.md, Caches), so the build directory may have been built from another checkout, whose differing
+    files can be older than what was built from them, and would never rebuild. Run after restoring the two and before
+    any other step: if the build directory was built from another state of the checkout, the files that differ are
+    made newer than anything built, so they rebuild. Those are the files of each patch that differs and the GN
+    target's copy, at the same pin and .gclient; any other difference, or another Apple SDK than the pinned one
+    that mac-sdk installs, can't be told file by file, so the build directory goes, and the build starts afresh."""
+    directory = out_dir(target)
+    if not directory.exists():
+        print('reconcile: no build directory', flush=True)
+        return
+    try:
+        record = json.loads((directory/BUILT_FROM).read_text())
+    except (OSError, ValueError):
+        record = None
+    built = record.get('checkout') if well_formed_record(record) else None
+    state = checkout_state()
+    sdk_pin = (target_entry(target).get('mac_sdk') or {}).get('sha256')
+    if built is None or state is None or built['synced'] != state['synced'] or record['apple_sdk'] != sdk_pin:
+        shutil.rmtree(directory)
+        summary(f'The restored build directory was built from another Chromium checkout: {target} builds afresh')
+        return
+    if built == state:
+        print('reconcile: the build directory was built from this checkout', flush=True)
+        return
+    names = set()
+    for repo in set(built['patches']) | set(state['patches']):
+        had, has = built['patches'].get(repo, {}), state['patches'].get(repo, {})
+        if had.get('sha256') != has.get('sha256'):
+            names |= set(had.get('files', [])) | set(has.get('files', []))
+    if built['gn'] != state['gn']:
+        names |= {f'{GN_DIR}/{name}' for name in set(built['gn']) | set(state['gn'])}
+    src = checkout_root()/'src'
+    now = time.time_ns()
+    for name in sorted(names):
+        path = src/name
+        if path.is_file() and not path.is_symlink():
+            os.utime(path, ns=(now, now))
+    # configure rewrites the build directory's record.
+    summary(f'The restored build directory was built with other patches or GN target: {len(names)} files of {target} '
+            'rebuild')
+
+
 # configure
 
 def args_gn(target):
@@ -369,6 +465,11 @@ def args_gn(target):
 def step_configure(target, args):
     directory = out_dir(target)
     directory.mkdir(parents=True, exist_ok=True)
+    # What the build directory is now built from, for reconcile, once a cache has kept it apart from its checkout.
+    record = directory/BUILT_FROM
+    partial = record.with_name(record.name+'.partial')
+    partial.write_text(json.dumps(built_from(target), indent=2, sort_keys=True)+'\n')
+    os.replace(partial, record)
     wanted = args_gn(target)
     current = directory/'args.gn'
     # A restored build directory with the same arguments is left alone: a newer args.gn regenerates everything.
@@ -402,7 +503,7 @@ def step_sources(target, args):
         linux = [(entry['sysroot'], 'build/linux/sysroot_scripts/generated_package_lists/bullseye.' +
                   {'x64': 'amd64', 'arm64': 'arm64'}[entry['target_cpu']])
                  for entry in targets().values() if entry.get('sysroot')]
-        # Not on the kept disk, which holds only the build: the job downloads them each time.
+        # Never in a cache, which holds only the build: the job downloads them each time.
         cache = Path(args.cache) if args.cache else Path(tempfile.gettempdir())/'libchromium-debian-cache'
         written.append(licences.sysroot_sources(checkout_root()/'src', linux, cache, output, args.version,
                                                 'debian-bullseye-sysroots'))
@@ -415,6 +516,7 @@ def step_sources(target, args):
 
 
 STEPS = {
+    'reconcile': step_reconcile,
     'checkout': step_checkout,
     'packages': step_packages,
     'mac-sdk': step_mac_sdk,

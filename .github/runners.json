@@ -1,6 +1,15 @@
 {
-  "disks": {
-    "linux-amd64": {
+  "caches": {
+    "chromium-checkout": {
+      "from": [
+        "chromium/gclient",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "chromium/pin.json"
+      ]
+    },
+    "chromium-out-linux-amd64": {
       "from": [
         "chromium/args.gn",
         "chromium/gclient",
@@ -15,7 +24,7 @@
         "targets.json"
       ]
     },
-    "linux-arm64": {
+    "chromium-out-linux-arm64": {
       "from": [
         "chromium/args.gn",
         "chromium/gclient",
@@ -30,7 +39,7 @@
         "targets.json"
       ]
     },
-    "macos-arm64": {
+    "chromium-out-macos-arm64": {
       "from": [
         "chromium/args.gn",
         "chromium/gclient",
