@@ -31,7 +31,7 @@ jobs:
       publish: ${{ steps.version.outputs.publish }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: lanescape/actions/checkout@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+      - uses: lanescape/actions/checkout@v1
       - name: Fetch release tags and history
         run: git fetch --quiet --tags --unshallow origin 2>/dev/null || git fetch --quiet --tags origin
       - id: version
@@ -87,7 +87,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: lanescape/actions/checkout@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+      - uses: lanescape/actions/checkout@v1
       - name: Fetch release tags and history
         run: git fetch --quiet --tags --unshallow origin 2>/dev/null || git fetch --quiet --tags origin
       - name: Check this is still the next version

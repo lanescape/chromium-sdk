@@ -42,9 +42,14 @@ jobs:
             exit 1
           fi
       # An empty work disk at /work, or for the rerun of a job lost to a preemption or the age limit, its resume
-      # image, which already holds what the lost job restored.
-      - uses: lanescape/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
-      - uses: lanescape/actions/checkout@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+      # image, which already holds what the lost job restored. Room for the checkout and a build directory, and enough
+      # IOPS and throughput to move their many small files in and out of caches quickly (specs/0003-ci-cd.md, Caches).
+      - uses: lanescape/actions/disk@v1
+        with:
+          size-gb: 500
+          iops: 10000
+          throughput-mibps: 2400
+      - uses: lanescape/actions/checkout@v1
       - id: work
         name: Find what the work disk holds
         run: |
@@ -57,12 +62,12 @@ jobs:
       # target's build directory inside it. A resumed disk has them already, with the lost job's work since.
       - id: checkout-cache
         if: steps.work.outputs.resumed != 'true'
-        uses: lanescape/actions/cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+        uses: lanescape/actions/cache@v1
         with:
           name: chromium-checkout
           path: /work
       - if: steps.work.outputs.resumed != 'true'
-        uses: lanescape/actions/cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+        uses: lanescape/actions/cache@v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
@@ -118,12 +123,12 @@ jobs:
           apple-sdk-archive: ${{ steps.apple-sdk.outputs.archive }}
       # Saved only if the job succeeds. The build directory every time; the checkout once for each key, by
       # linux-amd64 alone: macOS adds the Apple SDK to it, which no cache may hold.
-      - uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+      - uses: lanescape/actions/save-cache@v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
       - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')
-        uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+        uses: lanescape/actions/save-cache@v1
         with:
           name: chromium-checkout
           path: /work
@@ -144,7 +149,7 @@ jobs:
             echo "::error::A Linux target's job must not be able to ask for an OIDC token"
             exit 1
           fi
-      - uses: lanescape/actions/checkout@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+      - uses: lanescape/actions/checkout@v1
       # macOS only: its caller grants `id-token: write` for this, as an embedder brings its own Apple SDK.
       - id: apple-sdk
         if: inputs.target == 'macos-arm64'
@@ -162,7 +167,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: lanescape/actions/checkout@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+      - uses: lanescape/actions/checkout@v1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: embedder-${{ inputs.target }}

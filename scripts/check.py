@@ -6,8 +6,9 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PINNED = re.compile(r'^\s*(?:-\s+)?uses:\s+([^\s@#]+)@([0-9a-f]{40})\b')
-USES = re.compile(r'^\s*(?:-\s+)?uses:\s+(\S+)')
+# An action's reference, bare or quoted as YAML allows, without its quotes.
+PINNED = re.compile(r'^\s*(?:-\s+)?uses:\s+(["\']?)([^\s@#"\']+)@([0-9a-f]{40})\1(?:\s|$)')
+USES = re.compile(r'^\s*(?:-\s+)?uses:\s+(?:"([^"\s]+)"|\'([^\'\s]+)\'|([^\s"\']+))')
 
 
 TARGET_WORKFLOW = './.github/workflows/target.yml'
@@ -15,6 +16,9 @@ CHECKS_WORKFLOW = './.github/workflows/checks.yml'
 FORK_GUARD = 'github.event.pull_request.head.repo.full_name == github.repository'
 PUBLISHES = "needs.version.outputs.publish == 'true'"
 BUILD_RUNNER = 'lanescape-80vcpu-linux-amd64-spot'
+# The build's work disk (specs/0003-ci-cd.md, Caches): as large as a checkout and a build directory need, and as fast as
+# moving their many small files in and out of caches needs.
+BUILD_DISK = ('iops: 10000', 'size-gb: 500', 'throughput-mibps: 2400')
 READ = {'contents': 'read'}
 
 
@@ -192,8 +196,11 @@ def service_step_problems(relative, number, lines, job, action, saves):
                 'save-cache']
     if relative != '.github/workflows/target.yml' or job != 'build':
         return [f'{relative}:{number}: only target.yml\'s build has a work disk and caches']
-    if action == 'disk' and given:
-        found.append(f'{relative}:{number}: the disk action takes no inputs')
+    if action == 'disk':
+        saves.append('disk')
+        if sorted(given) != list(BUILD_DISK) or any(key.startswith('if:') for key in step_keys(step)):
+            found.append(f'{relative}:{number}: the build asks for its work disk, every time, as '
+                         f'{", ".join(BUILD_DISK)}')
     if action == 'save-cache' and 'name: chromium-out-${{ inputs.target }}' in given:
         saves.append('chromium-out')
         if sorted(given) != ['name: chromium-out-${{ inputs.target }}',
@@ -218,7 +225,7 @@ def workflow_problems(repo):
     the checks and failing alone, CD's publish needing every chain, and the OIDC token only where the Apple SDK is
     fetched."""
     found = []
-    for path in sorted((repo/'.github').glob('**/*.yml')):
+    for path in yaml_files(repo):
         found += yaml_subset_problems(path, path.relative_to(repo).as_posix())
     workflows = repo/'.github/workflows'
     targets = json.loads((repo/'targets.json').read_text())
@@ -250,7 +257,7 @@ def workflow_problems(repo):
                 found.append(f'.github/workflows/{name}: {job_name} must have {what}')
 
     # Gating: a job runs only if every job it needs succeeded, and a failure is a failure.
-    for path in sorted((repo/'.github').glob('**/*.yml')):
+    for path in yaml_files(repo):
         relative = path.relative_to(repo).as_posix()
         for number, line in enumerate(path.read_text().splitlines(), 1):
             if line.strip().startswith('#'):
@@ -312,7 +319,7 @@ def workflow_problems(repo):
         found.append('.github/workflows/target.yml: the test must run on targets.json\'s test_runner for its target')
 
     saves = []
-    for path in sorted((repo/'.github').glob('**/*.yml')):
+    for path in yaml_files(repo):
         relative = path.relative_to(repo).as_posix()
         lines = path.read_text().splitlines()
         scripts = in_block_scalars(lines)
@@ -326,27 +333,31 @@ def workflow_problems(repo):
                 found.append(f'{relative}:{number}: only ci.yml\'s and cd.yml\'s macOS calls of target.yml may grant '
                              'id-token')
             # A script's text is never a step.
-            match = USES.match(line) if number - 1 not in scripts else None
-            if match and match.group(1).startswith('actions/upload-artifact@'):
+            used = uses_of(line) if number - 1 not in scripts else None
+            if used and used.startswith('actions/upload-artifact@'):
                 # Artifacts are intermediate and kept a day (specs/0003-ci-cd.md, CI).
                 given = step_keys(step_lines(lines, number - 1), 'with')
                 if [key for key in given if key.startswith('retention-days:')] != ['retention-days: 1']:
                     found.append(f'{relative}:{number}: keep the artifact for 1 day, `retention-days: 1`')
-            if not match:
+            if not used:
                 continue
             job = next((heading.group(1) for heading in (re.fullmatch(r'  ([A-Za-z0-9_-]+):\s*', other)
                                                               for other in reversed(lines[:number-1]))
                         if heading), None)
-            service = re.fullmatch(r'lanescape/actions/([a-z-]+)@.*', match.group(1))
-            if service and service.group(1) != 'checkout':
-                found += service_step_problems(relative, number, lines, job, service.group(1), saves)
-            if match.group(1) == './.github/actions/apple-sdk':
+            # GitHub reads an owner and repository in any case.
+            service = re.fullmatch(r'lanescape/actions/([a-z-]+)@.*', used, re.IGNORECASE)
+            if service and service.group(1).lower() != 'checkout':
+                found += service_step_problems(relative, number, lines, job, service.group(1).lower(), saves)
+            if used == './.github/actions/apple-sdk':
                 # In its own step, guarded by its own condition, in a job its call's grant reaches.
                 guarded = [key for key in step_keys(step_lines(lines, number - 1)) if key.startswith('if:')]
                 if relative != '.github/workflows/target.yml' or job not in ('build', 'embedder') or \
                         guarded != ["if: inputs.target == 'macos-arm64'"]:
                     found.append(f'{relative}:{number}: only target.yml\'s build and embedder may fetch the Apple SDK, '
                                  'and only for macos-arm64')
+    if saves.count('disk') != 1:
+        found.append('.github/workflows/target.yml: its build must ask for its work disk once')
+    saves = [what for what in saves if what != 'disk']
     if sorted(saves) != ['chromium-checkout', 'chromium-out']:
         found.append('.github/workflows/target.yml: its build must save the build directory once and the checkout once')
     return found
@@ -390,6 +401,39 @@ def cache_problems(repo):
     return found
 
 
+def yaml_files(repo):
+    """Every YAML file under .github: .yml, and the .yaml that GitHub reads as a workflow or an action."""
+    github = repo/'.github'
+    return sorted(set(github.glob('**/*.yml')) | set(github.glob('workflows/*.yaml')) | set(github.glob('**/action.yaml')))
+
+
+def uses_of(line):
+    """The action a workflow's line uses, without quotes, or None."""
+    match = USES.match(line)
+    return next(group for group in match.groups() if group) if match else None
+
+
+def uses_problems(relative, number, line):
+    """How a workflow's line names an action: lanescape/actions by its tag, `@v1`, which moves only forward, on a
+    reviewed merge there; every other action pinned to a commit."""
+    used = uses_of(line)
+    if used and '\\' in used:
+        # YAML would decode an escape into another reference than the one these rules read.
+        return [f'{relative}:{number}: write the action\'s reference without escapes']
+    if used and used.startswith('./') and (not used.startswith('./.github/') or '..' in used.split('/')):
+        # Every local action and workflow is where these rules read them.
+        return [f'{relative}:{number}: keep {used} under .github/']
+    if not used or used.startswith('./'):
+        return []
+    if used.lower().startswith('lanescape/actions/'):
+        if not re.fullmatch(r'lanescape/actions/[a-z-]+@v1', used):
+            return [f'{relative}:{number}: use {used.split("@")[0]}@v1, lanescape/actions\' tag']
+        return []
+    if not PINNED.match(line):
+        return [f'{relative}:{number}: pin {used} to a commit']
+    return []
+
+
 def problems():
     found = []
     for path in sorted(list(REPO.glob('scripts/*.py')) + list(REPO.glob('tests/**/*.py'))):
@@ -422,13 +466,9 @@ def problems():
             found.append('targets.json: mac_sdk must name gs://lanescape-ci-tools/macos/sdk/<version>/<file> '
                          'and its SHA-256')
 
-    for path in sorted((REPO/'.github').glob('**/*.yml')):
+    for path in yaml_files(REPO):
         for number, line in enumerate(path.read_text().splitlines(), 1):
-            match = USES.match(line)
-            if not match or match.group(1).startswith('./'):
-                continue
-            if not PINNED.match(line):
-                found.append(f'{path.relative_to(REPO)}:{number}: pin {match.group(1)} to a commit')
+            found += uses_problems(path.relative_to(REPO), number, line)
 
     found += workflow_problems(REPO)
 
