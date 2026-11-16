@@ -20,7 +20,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: lanescape/actions/checkout@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+      - uses: lanescape/actions/checkout@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
       - name: Script tests
         run: python3 -m unittest discover --start-directory tests/scripts --top-level-directory . --verbose
       - name: Repository checks

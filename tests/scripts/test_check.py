@@ -327,7 +327,7 @@ class WorkflowShape(unittest.TestCase):
                 self.assertIn(f'.github/workflows/{workflow}: {problem}', self.problems())
 
     def test_only_linux_amd64_saves_the_checkout(self):
-        saves = '        uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1\n        with:\n'
+        saves = '        uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1\n        with:\n'
         for old, new in (
                 ("      - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n",
                  '      - if: "!endsWith(steps.restored.outputs.checkout, \'_exact\')"\n'),
@@ -362,10 +362,10 @@ class WorkflowShape(unittest.TestCase):
         self.assertTrue(any('save the build directory alone' in p for p in self.problems()))
 
     def test_the_build_directory_is_saved_every_time(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
         with:
           name: chromium-out-${{ inputs.target }}""", """      - if: inputs.target == 'linux-amd64'
-        uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
         with:
           name: chromium-out-${{ inputs.target }}""")
         self.assertTrue(any('save the build directory alone, whole, every time' in p for p in self.problems()))
@@ -378,13 +378,13 @@ class WorkflowShape(unittest.TestCase):
         self.assertTrue(any('save the build directory alone, whole, every time' in p for p in self.problems()))
 
     def test_a_script_s_text_is_no_step(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
 """, """      - run: |
           cat <<'EOF'
-          - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+          - uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
             with:
               name: chromium-out-${{ inputs.target }}
               path: /work/chromium/src/out/${{ inputs.target }}
@@ -404,7 +404,7 @@ class WorkflowShape(unittest.TestCase):
         self.assertEqual(self.problems(), [])
 
     def test_both_caches_are_saved(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
@@ -434,7 +434,7 @@ class WorkflowShape(unittest.TestCase):
 """, """    needs: build
     runs-on: lanescape-16vcpu-linux-amd64
     steps:
-      - uses: lanescape/actions/cache@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+      - uses: lanescape/actions/cache@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
         with:
           name: chromium-checkout
           path: /work
@@ -443,13 +443,13 @@ class WorkflowShape(unittest.TestCase):
 
     def test_no_disk_is_saved(self):
         self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@""",
-                  """      - uses: lanescape/actions/save-disk@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+                  """      - uses: lanescape/actions/save-disk@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
       - uses: lanescape/actions/save-cache@""")
         self.assertTrue(any('the runner service keeps no disks' in p for p in self.problems()))
 
     def test_the_disk_takes_no_inputs(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/disk@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
-""", """      - uses: lanescape/actions/disk@6b7a61eb60f4854a4dfde30f41f7fff3bd107569 # v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
+""", """      - uses: lanescape/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb # v1
         with:
           family: ${{ inputs.target }}
 """)
