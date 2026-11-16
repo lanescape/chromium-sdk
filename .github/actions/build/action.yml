@@ -2,7 +2,8 @@ name: Build an SDK target
 description: >-
   Builds one target's SDK on a runner-service machine whose work disk, mounted at /work, holds the Chromium build,
   packages it, and hands the package to the embedder's build as an artifact (specs/0003-ci-cd.md). The job asks for
-  the disk and checks out this repository first, for macOS fetches the Apple SDK, and asks to save the disk last.
+  the disk, checks out this repository and restores the checkout's and the build directory's caches first, for macOS
+  fetches the Apple SDK, and saves the caches last.
 inputs:
   target:
     description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
