@@ -50,6 +50,20 @@ runs:
         LIBCHROMIUM_CHECKOUT: /work/chromium
         DEPOT_TOOLS: /work/depot_tools
       run: python3 scripts/sdk.py build "$TARGET"
+    # For now, a measurement for the maintainer (specs/0003-ci-cd.md, Timing the macOS link). It never fails the build,
+    # and the trace isn't kept in the build directory's cache.
+    - name: Summarize the macOS link's time trace
+      if: inputs.target == 'macos-arm64'
+      shell: bash
+      env:
+        TRACE: /work/chromium/src/out/${{ inputs.target }}/libchromium-link-trace.json
+      run: |
+        if [ -f "$TRACE" ]; then
+          python3 scripts/link_trace.py "$TRACE" --summary "$GITHUB_STEP_SUMMARY" || true
+          rm -f "$TRACE" || echo "The time trace couldn't be removed."
+        else
+          echo "libchromium.dylib wasn't linked, so there's no time trace."
+        fi
     - name: Package
       shell: bash
       env:
