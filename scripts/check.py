@@ -18,7 +18,7 @@ PUBLISHES = "needs.version.outputs.publish == 'true'"
 BUILD_RUNNER = 'lanescape-80vcpu-linux-amd64-spot'
 # The build's work disk (specs/0003-ci-cd.md, Caches): as large as a checkout and a build directory need, and as fast as
 # moving their many small files in and out of caches needs.
-BUILD_DISK = ('iops: 10000', 'size-gb: 500', 'throughput-mibps: 2400')
+BUILD_DISK = ('iops: 10000', 'size-gb: 150', 'throughput-mibps: 2400')
 READ = {'contents': 'read'}
 
 
