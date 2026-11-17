@@ -81,7 +81,17 @@ if (is_mac) {
 shared_library("chromium") {
   public_deps = _exported
   if (is_mac) {
-    ldflags = [ "-Wl,-install_name,@rpath/libchromium.dylib" ]
+    ldflags = [
+      "-Wl,-install_name,@rpath/libchromium.dylib",
+
+      # For now, a time trace of the link, which the build action summarizes
+      # and removes (specs/0003-ci-cd.md, Timing the macOS link). Events shorter
+      # than 50 ms are left out, to keep the trace small.
+      "-Wl,--time-trace=" +
+          rebase_path("$root_out_dir/libchromium-link-trace.json",
+                      root_build_dir),
+      "-Wl,--time-trace-granularity=50000",
+    ]
   }
 }
 

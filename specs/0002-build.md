@@ -43,7 +43,7 @@ There is one configuration per target, Chromium's release build, which embedders
 
 `patch` also copies `chromium/gn/` into the tree as `//libchromium`, only where it changed, so a new checkout of this repository rebuilds nothing. `//libchromium` holds:
 
-- `:chromium`, the shared library, whose public dependencies are the exported targets, so a target that depends on it compiles with their settings and links only the library, a shared library being a link boundary;
+- `:chromium`, the shared library, whose public dependencies are the exported targets, so a target that depends on it compiles with their settings and links only the library, a shared library being a link boundary; on macOS, for now, its link also writes a time trace (specs/0003-ci-cd.md, Timing the macOS link);
 - `:embedder_probe`, an embedder in miniature that depends only on `:chromium`; it is never run, and its compile and link commands are the flags the SDK ships;
 - `:resources` and `:locales`, the resource packs;
 - `:libchromium`, everything a package needs, with ICU's data and V8's snapshot.
