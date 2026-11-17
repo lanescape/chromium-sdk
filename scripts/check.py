@@ -415,8 +415,7 @@ def uses_of(line):
 
 def uses_problems(relative, number, line):
     """How a workflow's line names an action: the runner service's, lanescape/runners/actions/<name>, by its tag,
-    `@v1`, which moves only forward, once a reviewed merge there is deployed; never lanescape/actions, where they were;
-    every other action pinned to a commit."""
+    `@v1`, which moves only forward, once a reviewed merge there is deployed; every other action pinned to a commit."""
     used = uses_of(line)
     if used and '\\' in used:
         # YAML would decode an escape into another reference than the one these rules read.
@@ -428,10 +427,6 @@ def uses_problems(relative, number, line):
         return []
     # The owner and repository, with or without a path in it.
     repository = '/'.join(used.split('@')[0].split('/')[:2]).lower()
-    if repository == 'lanescape/actions':
-        # The actions moved to lanescape/runners, whose v1 moves only once the service is deployed.
-        name = used.split('@')[0].split('/', 2)[2:] or ['<name>']
-        return [f'{relative}:{number}: use lanescape/runners/actions/{name[0]}@v1; the actions moved to lanescape/runners']
     if repository == 'lanescape/runners':
         if not re.fullmatch(r'lanescape/runners/actions/[a-z-]+@v1', used):
             return [f'{relative}:{number}: use {used.split("@")[0]}@v1, lanescape/runners\' tag']

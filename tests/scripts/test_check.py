@@ -510,18 +510,6 @@ class Uses(unittest.TestCase):
                 self.assertEqual(check.uses_problems('w.yml', 3, f'      - uses: lanescape/runners/actions/cache@{ref}'),
                                  ["w.yml:3: use lanescape/runners/actions/cache@v1, lanescape/runners' tag"])
 
-    def test_not_the_old_actions_repository(self):
-        for ref in ('v1', 'd68a947d79a49569632263432da6a2d3ea16aaeb'):
-            with self.subTest(ref=ref):
-                self.assertEqual(check.uses_problems('w.yml', 2, f'      - uses: lanescape/actions/disk@{ref}'),
-                                 ['w.yml:2: use lanescape/runners/actions/disk@v1; the actions moved to lanescape/runners'])
-        self.assertEqual(check.uses_problems('w.yml', 3, '      - uses: Lanescape/Actions/save-cache@v1'),
-                         ['w.yml:3: use lanescape/runners/actions/save-cache@v1; the actions moved to lanescape/runners'])
-        for used in ('lanescape/actions@v1', 'Lanescape/Actions@0123456789abcdef0123456789abcdef01234567'):
-            with self.subTest(used=used):
-                self.assertEqual(check.uses_problems('w.yml', 4, f'      - uses: {used}'),
-                                 ['w.yml:4: use lanescape/runners/actions/<name>@v1; the actions moved to lanescape/runners'])
-
     def test_only_the_runner_services_actions_from_its_repository(self):
         for used in ('lanescape/runners/actions/internal/gcs@v1', 'lanescape/runners/.github/workflows/ci.yml@v1',
                      'lanescape/runners/actions/disk@main', 'lanescape/runners@v1',
