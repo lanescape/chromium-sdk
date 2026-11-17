@@ -327,7 +327,7 @@ class WorkflowShape(unittest.TestCase):
                 self.assertIn(f'.github/workflows/{workflow}: {problem}', self.problems())
 
     def test_only_linux_amd64_saves_the_checkout(self):
-        saves = '        uses: lanescape/actions/save-cache@v1\n        with:\n'
+        saves = '        uses: lanescape/runners/actions/save-cache@v1\n        with:\n'
         for old, new in (
                 ("      - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n",
                  '      - if: "!endsWith(steps.restored.outputs.checkout, \'_exact\')"\n'),
@@ -362,10 +362,10 @@ class WorkflowShape(unittest.TestCase):
         self.assertTrue(any('save the build directory alone' in p for p in self.problems()))
 
     def test_the_build_directory_is_saved_every_time(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@v1
         with:
           name: chromium-out-${{ inputs.target }}""", """      - if: inputs.target == 'linux-amd64'
-        uses: lanescape/actions/save-cache@v1
+        uses: lanescape/runners/actions/save-cache@v1
         with:
           name: chromium-out-${{ inputs.target }}""")
         self.assertTrue(any('save the build directory alone, whole, every time' in p for p in self.problems()))
@@ -378,13 +378,13 @@ class WorkflowShape(unittest.TestCase):
         self.assertTrue(any('save the build directory alone, whole, every time' in p for p in self.problems()))
 
     def test_a_script_s_text_is_no_step(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
 """, """      - run: |
           cat <<'EOF'
-          - uses: lanescape/actions/save-cache@v1
+          - uses: lanescape/runners/actions/save-cache@v1
             with:
               name: chromium-out-${{ inputs.target }}
               path: /work/chromium/src/out/${{ inputs.target }}
@@ -404,7 +404,7 @@ class WorkflowShape(unittest.TestCase):
         self.assertEqual(self.problems(), [])
 
     def test_both_caches_are_saved(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
@@ -434,7 +434,7 @@ class WorkflowShape(unittest.TestCase):
 """, """    needs: build
     runs-on: lanescape-16vcpu-linux-amd64
     steps:
-      - uses: lanescape/actions/cache@v1
+      - uses: lanescape/runners/actions/cache@v1
         with:
           name: chromium-checkout
           path: /work
@@ -442,9 +442,9 @@ class WorkflowShape(unittest.TestCase):
         self.assertTrue(any("only target.yml's build has a work disk and caches" in p for p in self.problems()))
 
     def test_no_disk_is_saved(self):
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/save-cache@""",
-                  """      - uses: lanescape/actions/save-disk@v1
-      - uses: lanescape/actions/save-cache@""")
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@""",
+                  """      - uses: lanescape/runners/actions/save-disk@v1
+      - uses: lanescape/runners/actions/save-cache@""")
         self.assertTrue(any('the runner service keeps no disks' in p for p in self.problems()))
 
     def test_the_build_asks_for_its_disk(self):
@@ -461,9 +461,9 @@ class WorkflowShape(unittest.TestCase):
 
     def test_a_disk_in_another_case_or_file(self):
         # A second disk, its owner in another case, counts as the build's second.
-        self.edit('.github/workflows/target.yml', """      - uses: lanescape/actions/disk@v1
-""", """      - uses: Lanescape/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb
-      - uses: lanescape/actions/disk@v1
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/disk@v1
+""", """      - uses: Lanescape/runners/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb
+      - uses: lanescape/runners/actions/disk@v1
 """)
         problems = self.problems()
         self.assertTrue(any('its build must ask for its work disk once' in p for p in problems))
@@ -476,12 +476,12 @@ class WorkflowShape(unittest.TestCase):
 runs:
   using: composite
   steps:
-    - uses: lanescape/actions/disk@v1
+    - uses: lanescape/runners/actions/disk@v1
 """)
         self.assertTrue(any(p.startswith('.github/actions/extra/action.yaml:5: only target.yml') for p in self.problems()))
 
     def test_the_build_always_asks_for_its_disk(self):
-        disk = """      - uses: lanescape/actions/disk@v1
+        disk = """      - uses: lanescape/runners/actions/disk@v1
         with:
           size-gb: 500
           iops: 10000
@@ -495,29 +495,50 @@ runs:
         self.assertTrue(any('the build asks for its work disk, every time' in p for p in self.problems()))
         self.tearDown()
         self.setUp()
-        self.edit('.github/workflows/target.yml', disk, disk.replace('lanescape/actions/disk@v1',
-                                                                  "'lanescape/actions/disk@v1'"))
+        self.edit('.github/workflows/target.yml', disk, disk.replace('lanescape/runners/actions/disk@v1',
+                                                                  "'lanescape/runners/actions/disk@v1'"))
         self.assertFalse([p for p in self.problems() if 'work disk' in p])
 
 
 class Uses(unittest.TestCase):
     """scripts/check.py's rule for how a workflow names an action."""
 
-    def test_lanescape_actions_by_their_tag(self):
-        self.assertEqual(check.uses_problems('w.yml', 1, '      - uses: lanescape/actions/disk@v1'), [])
+    def test_the_runner_services_actions_by_their_tag(self):
+        self.assertEqual(check.uses_problems('w.yml', 1, '      - uses: lanescape/runners/actions/disk@v1'), [])
         for ref in ('d68a947d79a49569632263432da6a2d3ea16aaeb # v1', 'main', 'v1.2'):
             with self.subTest(ref=ref):
-                self.assertEqual(check.uses_problems('w.yml', 3, f'      - uses: lanescape/actions/cache@{ref}'),
-                                 ["w.yml:3: use lanescape/actions/cache@v1, lanescape/actions' tag"])
+                self.assertEqual(check.uses_problems('w.yml', 3, f'      - uses: lanescape/runners/actions/cache@{ref}'),
+                                 ["w.yml:3: use lanescape/runners/actions/cache@v1, lanescape/runners' tag"])
+
+    def test_not_the_old_actions_repository(self):
+        for ref in ('v1', 'd68a947d79a49569632263432da6a2d3ea16aaeb'):
+            with self.subTest(ref=ref):
+                self.assertEqual(check.uses_problems('w.yml', 2, f'      - uses: lanescape/actions/disk@{ref}'),
+                                 ['w.yml:2: use lanescape/runners/actions/disk@v1; the actions moved to lanescape/runners'])
+        self.assertEqual(check.uses_problems('w.yml', 3, '      - uses: Lanescape/Actions/save-cache@v1'),
+                         ['w.yml:3: use lanescape/runners/actions/save-cache@v1; the actions moved to lanescape/runners'])
+        for used in ('lanescape/actions@v1', 'Lanescape/Actions@0123456789abcdef0123456789abcdef01234567'):
+            with self.subTest(used=used):
+                self.assertEqual(check.uses_problems('w.yml', 4, f'      - uses: {used}'),
+                                 ['w.yml:4: use lanescape/runners/actions/<name>@v1; the actions moved to lanescape/runners'])
+
+    def test_only_the_runner_services_actions_from_its_repository(self):
+        for used in ('lanescape/runners/actions/internal/gcs@v1', 'lanescape/runners/.github/workflows/ci.yml@v1',
+                     'lanescape/runners/actions/disk@main', 'lanescape/runners@v1',
+                     'lanescape/runners@0123456789abcdef0123456789abcdef01234567',
+                     'Lanescape/Runners@0123456789abcdef0123456789abcdef01234567'):
+            with self.subTest(used=used):
+                self.assertEqual(check.uses_problems('w.yml', 4, f'      - uses: {used}'),
+                                 [f"w.yml:4: use {used.split('@')[0]}@v1, lanescape/runners' tag"])
 
     def test_quoted_references(self):
         for quote in ('"', "'"):
             with self.subTest(quote=quote):
-                self.assertEqual(check.uses_problems('w.yml', 1, f'      - uses: {quote}lanescape/actions/disk@v1{quote}'),
+                self.assertEqual(check.uses_problems('w.yml', 1, f'      - uses: {quote}lanescape/runners/actions/disk@v1{quote}'),
                                  [])
                 self.assertEqual(check.uses_problems(
-                    'w.yml', 2, f'      - uses: {quote}lanescape/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb'
-                                f'{quote}'), ["w.yml:2: use lanescape/actions/disk@v1, lanescape/actions' tag"])
+                    'w.yml', 2, f'      - uses: {quote}lanescape/runners/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb'
+                                f'{quote}'), ["w.yml:2: use lanescape/runners/actions/disk@v1, lanescape/runners' tag"])
                 self.assertEqual(check.uses_problems(
                     'w.yml', 3, f'      - uses: {quote}actions/checkout@0123456789abcdef0123456789abcdef01234567{quote}'),
                     [])
@@ -525,10 +546,10 @@ class Uses(unittest.TestCase):
                                  ['w.yml:4: pin actions/checkout@v6 to a commit'])
 
     def test_references_in_another_case(self):
-        line = '      - uses: Lanescape/Actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb'
-        self.assertEqual(check.uses_problems('w.yml', 6, line), ["w.yml:6: use Lanescape/Actions/disk@v1, lanescape/actions' tag"])
-        self.assertEqual(check.uses_problems('w.yml', 7, '      - uses: Lanescape/actions/disk@v1'),
-                         ["w.yml:7: use Lanescape/actions/disk@v1, lanescape/actions' tag"])
+        line = '      - uses: Lanescape/Runners/actions/disk@d68a947d79a49569632263432da6a2d3ea16aaeb'
+        self.assertEqual(check.uses_problems('w.yml', 6, line), ["w.yml:6: use Lanescape/Runners/actions/disk@v1, lanescape/runners' tag"])
+        self.assertEqual(check.uses_problems('w.yml', 7, '      - uses: Lanescape/runners/actions/disk@v1'),
+                         ["w.yml:7: use Lanescape/runners/actions/disk@v1, lanescape/runners' tag"])
 
     def test_local_actions_under_github(self):
         self.assertEqual(check.uses_problems('w.yml', 1, '      - uses: ./.github/actions/apple-sdk'), [])
