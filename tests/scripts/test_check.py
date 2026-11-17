@@ -449,14 +449,14 @@ class WorkflowShape(unittest.TestCase):
 
     def test_the_build_asks_for_its_disk(self):
         self.assertFalse([p for p in self.problems() if 'asks for its work disk' in p])
-        for old, new in (('          size-gb: 500\n', '          size-gb: 50\n'),
+        for old, new in (('          size-gb: 150\n', '          size-gb: 50\n'),
                          ('          iops: 10000\n', ''),
-                         ('          size-gb: 500\n', '          size-gb: 500\n          family: linux-amd64\n')):
+                         ('          size-gb: 150\n', '          size-gb: 150\n          family: linux-amd64\n')):
             with self.subTest(new=new):
                 self.tearDown()
                 self.setUp()
                 self.edit('.github/workflows/target.yml', old, new)
-                self.assertTrue(any('the build asks for its work disk, every time, as iops: 10000, size-gb: 500, '
+                self.assertTrue(any('the build asks for its work disk, every time, as iops: 10000, size-gb: 150, '
                                     'throughput-mibps: 2400' in p for p in self.problems()))
 
     def test_a_disk_in_another_case_or_file(self):
@@ -483,7 +483,7 @@ runs:
     def test_the_build_always_asks_for_its_disk(self):
         disk = """      - uses: lanescape/runners/actions/disk@v1
         with:
-          size-gb: 500
+          size-gb: 150
           iops: 10000
           throughput-mibps: 2400
 """

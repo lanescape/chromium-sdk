@@ -46,7 +46,7 @@ jobs:
       # IOPS and throughput to move their many small files in and out of caches quickly (specs/0003-ci-cd.md, Caches).
       - uses: lanescape/runners/actions/disk@v1
         with:
-          size-gb: 500
+          size-gb: 150
           iops: 10000
           throughput-mibps: 2400
       - uses: lanescape/runners/actions/checkout@v1
