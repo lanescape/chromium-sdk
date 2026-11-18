@@ -1,4 +1,9 @@
+import os
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from tests.scripts.common import REPO  # noqa: F401
 import export_patch
@@ -66,11 +71,15 @@ class RewriteHeader(unittest.TestCase):
         self.assertEqual(export_patch.owner('v8x/foo.h', repos), '')
 
 
+# The one file the patches change for a reason other than the SDK's switch.
+TOC_FIX = 'build/toolchain/apple/linker_driver.py'
+
+
 class CarriedPatches(unittest.TestCase):
-    def test_every_gn_edit_is_carried(self):
-        """The checked-in patches are the generator's output: every line each GN edit adds is in its patch."""
+    def test_every_edit_is_carried(self):
+        """The checked-in patches are the generator's output: every line each edit adds is in its patch."""
         repos = ('v8', 'third_party/perfetto')
-        for path, old, new in export_patch.GN_EDITS:
+        for path, old, new in export_patch.EDITS:
             repo = next((r for r in repos if path.startswith(r+'/')), '')
             patch = (REPO/'chromium/patches'/(f'{repo}.patch' if repo else 'src.patch')).read_text()
             relative = path[len(repo)+1:] if repo else path
@@ -79,10 +88,20 @@ class CarriedPatches(unittest.TestCase):
                 self.assertIn('+'+line, patch.splitlines(), f'{path}: {line}')
 
     def test_patches_only_add_the_sdk_switch(self):
-        """Every line the carried patches add mentions the SDK's switch, or is a comment or GN syntax around it."""
+        """Every line the carried patches add mentions the SDK's switch, or is a comment or GN syntax around it,
+        or is in the linker driver's TOC fix, the one change that isn't the switch's."""
+        fix = {line for path, old, new in export_patch.EDITS if path == TOC_FIX
+               for line in set(new.splitlines()) - set(old.splitlines())}
+        self.assertTrue(fix)
         for patch in sorted((REPO/'chromium/patches').glob('**/*.patch')):
+            path = None
             for line in patch.read_text().splitlines():
+                if line.startswith('+++ b/'):
+                    path = line[len('+++ b/'):]
                 if not line.startswith('+') or line.startswith('+++'):
+                    continue
+                if path == TOC_FIX:
+                    self.assertIn(line[1:], fix, f'{patch.name}: {line}')
                     continue
                 body = line[1:].strip()
                 if not body or body.startswith(('#', '//')) and 'COMPONENT_BUILD' not in body:
@@ -102,6 +121,63 @@ class CarriedPatches(unittest.TestCase):
                 self.assertTrue('LIBCHROMIUM_EXPORTS' in body or 'libchromium_exports' in body,
                                 f'{patch.name}: {line}')
 
+
+
+class TocFix(unittest.TestCase):
+    """The linker driver's TOC fix, run: the pin's _extract_toc (tests/scripts/fixtures), with EDITS applied in
+    order, against fixed otool and nm output."""
+
+    OTOOL = (b'Load command 3\n      cmd LC_ID_DYLIB\n  cmdsize 56\n     name @rpath/libx.dylib (offset 24)\n'
+             b'   time stamp 1 Thu Jan  1 00:00:01 1970\n      current version 0.0.0\n'
+             b'compatibility version 0.0.0\nLoad command 4\n      cmd LC_LOAD_DYLIB\n')
+    NM = (b'0000000000001000 T __ZN4base3FooEv\n0000000000002000 D _kTable\nshort line\n'
+          b'0000000000003000 T __ZN4base3BarEi\n')
+    EXPECTED = (b'      cmd LC_ID_DYLIB\n  cmdsize 56\n     name @rpath/libx.dylib (offset 24)\n'
+                b'   time stamp 1 Thu Jan  1 00:00:01 1970\n      current version 0.0.0\n'
+                b'compatibility version 0.0.0\n'
+                b'T __ZN4base3FooEv\nD _kTable\nT __ZN4base3BarEi\n')
+
+    def sources(self):
+        before = (REPO/'tests/scripts/fixtures/linker_driver_extract_toc.py').read_text()
+        after = before
+        for path, old, new in export_patch.EDITS:
+            if path == TOC_FIX:
+                after = export_patch.apply_gn_edit(after, old, new, path)
+        return before, after
+
+    def toc(self, source, otool=OTOOL, nm=NM):
+        namespace = {}
+        exec(compile(source, TOC_FIX, 'exec'), namespace)
+        driver = namespace['LinkerDriver'].__new__(namespace['LinkerDriver'])
+        driver._otool_cmd, driver._nm_cmd = ['otool'], ['nm']
+        driver._get_linker_output = lambda: 'libx.dylib'
+        answers = {'otool': otool, 'nm': nm}
+        with mock.patch.object(subprocess, 'check_output', side_effect=lambda cmd: answers[cmd[0]]):
+            return driver._extract_toc()
+
+    def test_the_edits_change_the_code_not_the_toc(self):
+        before, after = self.sources()
+        self.assertNotEqual(before, after)
+        self.assertNotIn('toc +=', after)
+        self.assertEqual(self.toc(before), self.EXPECTED)
+        self.assertEqual(self.toc(after), self.EXPECTED)
+        # No LC_ID_DYLIB, and no symbols.
+        self.assertEqual(self.toc(after, otool=b'Load command 0\n', nm=b''), self.toc(before, otool=b'Load command 0\n', nm=b''))
+        with self.assertRaises(ValueError):
+            self.toc(after, otool=self.OTOOL + self.OTOOL)
+
+    def test_the_patch_is_the_edits(self):
+        """git applies the carried patch's linker driver hunks to the pin's code, which leaves the edited code."""
+        before, after = self.sources()
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)/TOC_FIX
+            target.parent.mkdir(parents=True)
+            target.write_text(before)
+            target.chmod(0o755)  # as the pin's file is
+            # Outside any repository, git apply patches the files under its working directory.
+            subprocess.run(['git', 'apply', f'--include={TOC_FIX}', str(REPO/'chromium/patches/src.patch')],
+                           cwd=tmp, check=True, env={**os.environ, 'GIT_CEILING_DIRECTORIES': tmp})
+            self.assertEqual(target.read_text(), after)
 
 if __name__ == '__main__':
     unittest.main()

@@ -326,5 +326,7 @@ def sdk_source(output, version, commit='HEAD'):
         subprocess.run(['tar', '-xf', str(tar), '-C', tmp], check=True)
         tar.unlink()
         archive.write(tmp, asset)
-    return {'name': asset.name, 'part': 'source', 'component': 'libchromium', 'license': 'MIT',
+    # MIT, but for the excerpt of Chromium's own code a test runs, under Chromium's licence beside it.
+    return {'name': asset.name, 'part': 'source', 'component': 'libchromium',
+            'license': 'MIT, and BSD-3-Clause for tests/scripts/fixtures (Chromium)',
             'size': asset.stat().st_size}

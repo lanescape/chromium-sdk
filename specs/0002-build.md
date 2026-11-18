@@ -25,7 +25,7 @@ There is one configuration per target, Chromium's release build, which embedders
 
 ## The patch
 
-`chromium/patches/` holds the SDK's one change to Chromium, as one patch for each repository it touches, applied by `patch`. It adds the GN argument `libchromium_exports`, which:
+`chromium/patches/` holds the SDK's changes to Chromium, as one patch for each repository it touches, applied by `patch`. It adds the GN argument `libchromium_exports`, which:
 
 - defines `LIBCHROMIUM_EXPORTS` for every target, which every export header that keys its `visibility("default")` on `COMPONENT_BUILD` (PartitionAlloc's, on its own `IS_COMPONENT_BUILD` flag) also takes, so a non-component build's shared library exports what a component build's libraries do;
 - builds components as source sets in the target's toolchain, so the library takes each whole, as a component build's libraries do, and keeps every export whether anything in it calls the export or not (a non-component build's static libraries would give the link only the objects something refers to);
@@ -37,13 +37,15 @@ There is one configuration per target, Chromium's release build, which embedders
 - keeps whole-program vtable optimisation off;
 - and, whatever the argument, lets a macOS build without V8's context snapshot generate: Chrome's own app bundle, which the SDK never builds but GN always loads, lists V8's snapshot without depending on what makes it.
 
-`scripts/export_patch.py <checkout>/src`, run on a clean checkout, writes the patches: one rule for the export headers, outside trees the SDK never links (Chrome, other platforms, tests), and exact edits, each of which must match once, for the GN files. Moving the pin is: change `chromium/pin.json`, check out the new pin, run `export_patch.py`, and review the patches' differences. `patch` applies each patch unless it is applied already, and starts a repository's patched files again from the pin's when a machine stopped mid-step left it half applied.
+Apart from the argument, it carries one fix the pin doesn't have, whatever the argument: macOS's linker driver (`build/toolchain/apple/linker_driver.py`) writes a shared library's `.TOC`, the list of its exports that decides whether what links it must relink, with a list joined once, rather than by appending to `bytes`, which copies the whole TOC each time. For this library's 310,000 exports that took 11 minutes on one core, after a link of 76 seconds; the TOC is the same either way. It's reported as https://issues.chromium.org/issues/587040685, and Chromium fixed it the same way in commit `394153f1299c` (`refs/heads/main@{#1747697}`). The fix goes when the pin includes that commit; `export_patch.py` stops on a pin that does, because the text its edits replace is gone.
+
+`scripts/export_patch.py <checkout>/src`, run on a clean checkout, writes the patches: one rule for the export headers, outside trees the SDK never links (Chrome, other platforms, tests), and exact edits, each of which must match once, for the GN files and the linker driver. Moving the pin is: change `chromium/pin.json`, check out the new pin, run `export_patch.py`, and review the patches' differences. `patch` applies each patch unless it is applied already, and starts a repository's patched files again from the pin's when a machine stopped mid-step left it half applied.
 
 ## Build
 
 `patch` also copies `chromium/gn/` into the tree as `//libchromium`, only where it changed, so a new checkout of this repository rebuilds nothing. `//libchromium` holds:
 
-- `:chromium`, the shared library, whose public dependencies are the exported targets, so a target that depends on it compiles with their settings and links only the library, a shared library being a link boundary; on macOS, for now, its link also writes a time trace (specs/0003-ci-cd.md, Timing the macOS link);
+- `:chromium`, the shared library, whose public dependencies are the exported targets, so a target that depends on it compiles with their settings and links only the library, a shared library being a link boundary;
 - `:embedder_probe`, an embedder in miniature that depends only on `:chromium`; it is never run, and its compile and link commands are the flags the SDK ships;
 - `:resources` and `:locales`, the resource packs;
 - `:libchromium`, everything a package needs, with ICU's data and V8's snapshot.
