@@ -27,9 +27,10 @@ exports between its components, and turns off what can't hold across that bounda
 - Whole-program vtable optimisation stays off: it assumes the link sees every class that implements an
   interface without exported visibility, and an embedder implements Content's delegates outside the library.
 
-Apart from the argument, it carries one fix that Chromium doesn't have yet: macOS's linker driver writes a shared
+Apart from the argument, it carries one fix the pin doesn't have: macOS's linker driver writes a shared
 library's .TOC with a list joined once, rather than by appending to bytes, which took minutes for this library
-(https://issues.chromium.org/issues/587040685).
+(https://issues.chromium.org/issues/587040685). Chromium has the same fix from commit 394153f1299c
+(refs/heads/main@{#1747697}).
 
 The patches are applied by `sdk.py patch`. This script runs only when the pin moves, on a checkout with no
 changes of its own, and leaves the checkout as it found it.
@@ -150,7 +151,9 @@ EDITS = (
     # Not part of the argument: macOS's linker driver writes a shared library's .TOC by appending to bytes, which
     # copies the whole TOC each time. For a library exporting 310,000 symbols that takes minutes on one core, long
     # after the link itself has finished. A list joined once writes the same TOC. Reported upstream as
-    # https://issues.chromium.org/issues/587040685; drop these once the pin has the fix.
+    # https://issues.chromium.org/issues/587040685 and fixed by Chromium commit 394153f1299c
+    # (refs/heads/main@{#1747697}). Drop these three edits when the pin includes that commit; on such a pin the
+    # export stops, because the text they replace is gone.
     ('build/toolchain/apple/linker_driver.py',
      "        toc = b''\n        dylib = self._get_linker_output()\n",
      '        # A list joined once: appending to bytes copies the TOC each time,\n'
