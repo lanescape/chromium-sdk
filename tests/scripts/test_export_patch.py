@@ -1,4 +1,7 @@
+import re
+import subprocess
 import unittest
+from unittest import mock
 
 from tests.scripts.common import REPO  # noqa: F401
 import export_patch
@@ -115,6 +118,80 @@ class CarriedPatches(unittest.TestCase):
                     continue
                 self.assertTrue('LIBCHROMIUM_EXPORTS' in body or 'libchromium_exports' in body,
                                 f'{patch.name}: {line}')
+
+
+
+def hunks(patch, path):
+    """Each hunk of path's section of patch, as the text it expects and the text it leaves."""
+    section = re.search(rf'(?ms)^diff --git a/{re.escape(path)} .*?(?=^diff --git |\Z)', patch).group(0)
+    out = []
+    for hunk in re.split(r'(?m)^@@ [^\n]*\n', section)[1:]:
+        before, after = [], []
+        for line in hunk.splitlines(keepends=True):
+            if line.startswith((' ', '-')):
+                before.append(line[1:])
+            if line.startswith((' ', '+')):
+                after.append(line[1:])
+        out.append((''.join(before), ''.join(after)))
+    return out
+
+
+class TocFix(unittest.TestCase):
+    """The linker driver's TOC fix, run: the pin's _extract_toc (tests/scripts/fixtures), with EDITS applied in
+    order, against fixed otool and nm output."""
+
+    OTOOL = (b'Load command 3\n      cmd LC_ID_DYLIB\n  cmdsize 56\n     name @rpath/libx.dylib (offset 24)\n'
+             b'   time stamp 1 Thu Jan  1 00:00:01 1970\n      current version 0.0.0\n'
+             b'compatibility version 0.0.0\nLoad command 4\n      cmd LC_LOAD_DYLIB\n')
+    NM = (b'0000000000001000 T __ZN4base3FooEv\n0000000000002000 D _kTable\nshort line\n'
+          b'0000000000003000 T __ZN4base3BarEi\n')
+    EXPECTED = (b'      cmd LC_ID_DYLIB\n  cmdsize 56\n     name @rpath/libx.dylib (offset 24)\n'
+                b'   time stamp 1 Thu Jan  1 00:00:01 1970\n      current version 0.0.0\n'
+                b'compatibility version 0.0.0\n'
+                b'T __ZN4base3FooEv\nD _kTable\nT __ZN4base3BarEi\n')
+
+    def sources(self):
+        before = (REPO/'tests/scripts/fixtures/linker_driver_extract_toc.py').read_text()
+        after = before
+        for path, old, new in export_patch.EDITS:
+            if path == TOC_FIX:
+                after = export_patch.apply_gn_edit(after, old, new, path)
+        return before, after
+
+    def toc(self, source, otool=OTOOL, nm=NM):
+        namespace = {}
+        exec(compile(source, TOC_FIX, 'exec'), namespace)
+        driver = namespace['LinkerDriver'].__new__(namespace['LinkerDriver'])
+        driver._otool_cmd, driver._nm_cmd = ['otool'], ['nm']
+        driver._get_linker_output = lambda: 'libx.dylib'
+        answers = {'otool': otool, 'nm': nm}
+        with mock.patch.object(subprocess, 'check_output', side_effect=lambda cmd: answers[cmd[0]]):
+            return driver._extract_toc()
+
+    def test_the_edits_change_the_code_not_the_toc(self):
+        before, after = self.sources()
+        self.assertNotEqual(before, after)
+        self.assertNotIn('toc +=', after)
+        self.assertEqual(self.toc(before), self.EXPECTED)
+        self.assertEqual(self.toc(after), self.EXPECTED)
+        # No LC_ID_DYLIB, and no symbols.
+        self.assertEqual(self.toc(after, otool=b'Load command 0\n', nm=b''), self.toc(before, otool=b'Load command 0\n', nm=b''))
+        with self.assertRaises(ValueError):
+            self.toc(after, otool=self.OTOOL + self.OTOOL)
+
+    def test_the_patch_is_the_edits(self):
+        """Every hunk of the carried patch expects the pin's code and leaves the edited code."""
+        before, after = self.sources()
+        found = hunks((REPO/'chromium/patches/src.patch').read_text(), TOC_FIX)
+        self.assertEqual(len(found), 3)
+        for expects, leaves in found:
+            self.assertEqual(before.count(expects), 1, expects)
+            self.assertEqual(after.count(leaves), 1, leaves)
+        # Applied in order to the pin's code, the hunks give the edited code.
+        patched = before
+        for expects, leaves in found:
+            patched = patched.replace(expects, leaves, 1)
+        self.assertEqual(patched, after)
 
 
 if __name__ == '__main__':

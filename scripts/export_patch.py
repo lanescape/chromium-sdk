@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes chromium/patches/ from a clean checkout at the pin: export_patch.py <checkout src>.
 
-The SDK's one change to Chromium (specs/0002-build.md, The patch). It adds the build argument
+The SDK's changes to Chromium (specs/0002-build.md, The patch). They add the build argument
 `libchromium_exports`, which makes a non-component build's shared libraries export what a component build
 exports between its components, and turns off what can't hold across that boundary:
 
@@ -59,7 +59,8 @@ REPLACEMENT = f'(defined(COMPONENT_BUILD) || defined({DEFINE}))'
 PA_TOKEN = 'PA_BUILDFLAG(IS_COMPONENT_BUILD)'
 PA_REPLACEMENT = f'(PA_BUILDFLAG(IS_COMPONENT_BUILD) || defined({DEFINE}))'
 
-# Exact edits to GN files: (path relative to src, old text, new text). Each old text must occur exactly once.
+# Exact edits to GN files and the linker driver: (path relative to src, old text, new text). Each old text
+# must occur exactly once.
 EDITS = (
     ('build/config/BUILDCONFIG.gn',
      '  is_component_build = is_debug && current_os != "android" &&\n'
