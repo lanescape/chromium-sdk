@@ -27,6 +27,10 @@ exports between its components, and turns off what can't hold across that bounda
 - Whole-program vtable optimisation stays off: it assumes the link sees every class that implements an
   interface without exported visibility, and an embedder implements Content's delegates outside the library.
 
+Apart from the argument, it carries one fix that Chromium doesn't have yet: macOS's linker driver writes a shared
+library's .TOC with a list joined once, rather than by appending to bytes, which took minutes for this library
+(https://issues.chromium.org/issues/587040685).
+
 The patches are applied by `sdk.py patch`. This script runs only when the pin moves, on a checkout with no
 changes of its own, and leaves the checkout as it found it.
 """
@@ -56,7 +60,7 @@ PA_TOKEN = 'PA_BUILDFLAG(IS_COMPONENT_BUILD)'
 PA_REPLACEMENT = f'(PA_BUILDFLAG(IS_COMPONENT_BUILD) || defined({DEFINE}))'
 
 # Exact edits to GN files: (path relative to src, old text, new text). Each old text must occur exactly once.
-GN_EDITS = (
+EDITS = (
     ('build/config/BUILDCONFIG.gn',
      '  is_component_build = is_debug && current_os != "android" &&\n'
      '                       current_os != "ios" && current_os != "watchos"\n',
@@ -142,6 +146,26 @@ GN_EDITS = (
      '  if (defined(is_component_build) && is_component_build) {\n    perfetto_component_build = true\n',
      '  if ((defined(is_component_build) && is_component_build) ||\n'
      f'      (defined({ARG}) && {ARG})) {{\n    perfetto_component_build = true\n'),
+    # Not part of the argument: macOS's linker driver writes a shared library's .TOC by appending to bytes, which
+    # copies the whole TOC each time. For a library exporting 310,000 symbols that takes minutes on one core, long
+    # after the link itself has finished. A list joined once writes the same TOC. Reported upstream as
+    # https://issues.chromium.org/issues/587040685; drop these once the pin has the fix.
+    ('build/toolchain/apple/linker_driver.py',
+     "        toc = b''\n        dylib = self._get_linker_output()\n",
+     '        # A list joined once: appending to bytes copies the TOC each time,\n'
+     '        # which takes minutes for a library exporting hundreds of thousands\n'
+     '        # of symbols (https://issues.chromium.org/issues/587040685).\n'
+     "        toc = []\n        dylib = self._get_linker_output()\n"),
+    ('build/toolchain/apple/linker_driver.py',
+     "                toc += line + b'\\n'\n"
+     "                for j in range(5):\n"
+     "                    toc += lines[i + 1 + j] + b'\\n'\n",
+     "                toc.append(line + b'\\n')\n"
+     "                for j in range(5):\n"
+     "                    toc.append(lines[i + 1 + j] + b'\\n')\n"),
+    ('build/toolchain/apple/linker_driver.py',
+     "            toc += b' '.join(fields[1:3]) + b'\\n'\n        return toc\n",
+     "            toc.append(b' '.join(fields[1:3]) + b'\\n')\n        return b''.join(toc)\n"),
 )
 
 
@@ -173,7 +197,7 @@ def is_export_header(text):
 def apply_gn_edit(text, old, new, path):
     count = text.count(old)
     if count != 1:
-        raise SystemExit(f'{path}: expected the edited text once, found it {count} times; update GN_EDITS')
+        raise SystemExit(f'{path}: expected the edited text once, found it {count} times; update EDITS')
     return text.replace(old, new)
 
 
@@ -223,7 +247,7 @@ def main():
             changed = rewrite_header(text)
             if changed != text:
                 touched[relative] = (text, changed)
-    for relative, old, new in GN_EDITS:
+    for relative, old, new in EDITS:
         text = touched.get(relative, (None, None))[1] or (src/relative).read_text()
         original = touched.get(relative, ((src/relative).read_text(), None))[0]
         touched[relative] = (original, apply_gn_edit(text, old, new, relative))

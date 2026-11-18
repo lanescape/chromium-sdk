@@ -66,11 +66,15 @@ class RewriteHeader(unittest.TestCase):
         self.assertEqual(export_patch.owner('v8x/foo.h', repos), '')
 
 
+# The one file the patches change for a reason other than the SDK's switch.
+TOC_FIX = 'build/toolchain/apple/linker_driver.py'
+
+
 class CarriedPatches(unittest.TestCase):
-    def test_every_gn_edit_is_carried(self):
-        """The checked-in patches are the generator's output: every line each GN edit adds is in its patch."""
+    def test_every_edit_is_carried(self):
+        """The checked-in patches are the generator's output: every line each edit adds is in its patch."""
         repos = ('v8', 'third_party/perfetto')
-        for path, old, new in export_patch.GN_EDITS:
+        for path, old, new in export_patch.EDITS:
             repo = next((r for r in repos if path.startswith(r+'/')), '')
             patch = (REPO/'chromium/patches'/(f'{repo}.patch' if repo else 'src.patch')).read_text()
             relative = path[len(repo)+1:] if repo else path
@@ -79,10 +83,20 @@ class CarriedPatches(unittest.TestCase):
                 self.assertIn('+'+line, patch.splitlines(), f'{path}: {line}')
 
     def test_patches_only_add_the_sdk_switch(self):
-        """Every line the carried patches add mentions the SDK's switch, or is a comment or GN syntax around it."""
+        """Every line the carried patches add mentions the SDK's switch, or is a comment or GN syntax around it,
+        or is in the linker driver's TOC fix, the one change that isn't the switch's."""
+        fix = {line for path, old, new in export_patch.EDITS if path == TOC_FIX
+               for line in set(new.splitlines()) - set(old.splitlines())}
+        self.assertTrue(fix)
         for patch in sorted((REPO/'chromium/patches').glob('**/*.patch')):
+            path = None
             for line in patch.read_text().splitlines():
+                if line.startswith('+++ b/'):
+                    path = line[len('+++ b/'):]
                 if not line.startswith('+') or line.startswith('+++'):
+                    continue
+                if path == TOC_FIX:
+                    self.assertIn(line[1:], fix, f'{patch.name}: {line}')
                     continue
                 body = line[1:].strip()
                 if not body or body.startswith(('#', '//')) and 'COMPONENT_BUILD' not in body:
