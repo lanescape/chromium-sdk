@@ -173,6 +173,7 @@ class TocFix(unittest.TestCase):
             target = Path(tmp)/TOC_FIX
             target.parent.mkdir(parents=True)
             target.write_text(before)
+            target.chmod(0o755)  # as the pin's file is
             # Outside any repository, git apply patches the files under its working directory.
             subprocess.run(['git', 'apply', f'--include={TOC_FIX}', str(REPO/'chromium/patches/src.patch')],
                            cwd=tmp, check=True, env={**os.environ, 'GIT_CEILING_DIRECTORIES': tmp})
