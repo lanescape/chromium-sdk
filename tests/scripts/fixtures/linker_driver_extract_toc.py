@@ -4,6 +4,7 @@
 #
 # LinkerDriver._extract_toc() and the function after it, from Chromium's build/toolchain/apple/linker_driver.py
 # at the pin, unchanged, for tests/scripts/test_export_patch.py, which applies the patch's edits and runs both.
+# The LICENSE file named above is Chromium's, beside this file as LICENSE.chromium.
 import subprocess
 
 

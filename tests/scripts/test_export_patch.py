@@ -1,6 +1,8 @@
-import re
+import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from tests.scripts.common import REPO  # noqa: F401
@@ -121,21 +123,6 @@ class CarriedPatches(unittest.TestCase):
 
 
 
-def hunks(patch, path):
-    """Each hunk of path's section of patch, as the text it expects and the text it leaves."""
-    section = re.search(rf'(?ms)^diff --git a/{re.escape(path)} .*?(?=^diff --git |\Z)', patch).group(0)
-    out = []
-    for hunk in re.split(r'(?m)^@@ [^\n]*\n', section)[1:]:
-        before, after = [], []
-        for line in hunk.splitlines(keepends=True):
-            if line.startswith((' ', '-')):
-                before.append(line[1:])
-            if line.startswith((' ', '+')):
-                after.append(line[1:])
-        out.append((''.join(before), ''.join(after)))
-    return out
-
-
 class TocFix(unittest.TestCase):
     """The linker driver's TOC fix, run: the pin's _extract_toc (tests/scripts/fixtures), with EDITS applied in
     order, against fixed otool and nm output."""
@@ -180,19 +167,16 @@ class TocFix(unittest.TestCase):
             self.toc(after, otool=self.OTOOL + self.OTOOL)
 
     def test_the_patch_is_the_edits(self):
-        """Every hunk of the carried patch expects the pin's code and leaves the edited code."""
+        """git applies the carried patch's linker driver hunks to the pin's code, which leaves the edited code."""
         before, after = self.sources()
-        found = hunks((REPO/'chromium/patches/src.patch').read_text(), TOC_FIX)
-        self.assertEqual(len(found), 3)
-        for expects, leaves in found:
-            self.assertEqual(before.count(expects), 1, expects)
-            self.assertEqual(after.count(leaves), 1, leaves)
-        # Applied in order to the pin's code, the hunks give the edited code.
-        patched = before
-        for expects, leaves in found:
-            patched = patched.replace(expects, leaves, 1)
-        self.assertEqual(patched, after)
-
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)/TOC_FIX
+            target.parent.mkdir(parents=True)
+            target.write_text(before)
+            # Outside any repository, git apply patches the files under its working directory.
+            subprocess.run(['git', 'apply', f'--include={TOC_FIX}', str(REPO/'chromium/patches/src.patch')],
+                           cwd=tmp, check=True, env={**os.environ, 'GIT_CEILING_DIRECTORIES': tmp})
+            self.assertEqual(target.read_text(), after)
 
 if __name__ == '__main__':
     unittest.main()
