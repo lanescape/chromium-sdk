@@ -367,7 +367,54 @@ class WorkflowShape(unittest.TestCase):
           name: chromium-out-${{ inputs.target }}
 """)
         self.assertIn('.github/workflows/target.yml: its build must save the build directory once, and never the '
-                      'checkout or its marker', self.problems())
+                      'checkout, nor check it', self.problems())
+
+    def test_the_chromium_checkout_job_only_checks_the_checkout_first(self):
+        check = """      - id: saved
+        uses: lanescape/runners/actions/cache@v1
+        with:
+          name: chromium-checkout
+          check-only: true
+"""
+        for new, problem in (
+                (check.replace('          check-only: true\n', ''), 'must check the checkout, then ask for a work disk'),
+                (check.replace('check-only: true', 'check-only: false'), 'checks the checkout every time'),
+                (check + '          path: /work\n', 'checks the checkout every time'),
+                (check.replace('      - id: saved\n', "      - id: saved\n        if: github.ref == 'refs/heads/main'\n"),
+                 'checks the checkout every time')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/startup.yml', check, new)
+                self.assertTrue(any(problem in p for p in self.problems()), self.problems())
+        # The decision reads the check's answer.
+        for old, new in (('RESTORED: ${{ steps.saved.outputs.restored }}', 'RESTORED: ${{ steps.saved.outputs.restore }}'),
+                         ('          RESTORED: ${{ steps.saved.outputs.restored }}\n', '          RESTORED: none\n'),
+                         ('      - id: saved\n', '      - id: probe\n')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/startup.yml', old, new)
+                self.assertTrue(any("decides from its check's answer" in p or 'as its step saved' in p
+                                    for p in self.problems()), self.problems())
+        # The step's keys in another order are the same step.
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/startup.yml', '      - id: needed\n        name: Decide whether to make the checkout\n',
+                  '      - name: Decide whether to make the checkout\n        id: needed\n')
+        self.assertEqual(self.problems(), [])
+        # A build never checks: its restore is what chooses.
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/target.yml', """      - id: checkout-cache
+""", """      - uses: lanescape/runners/actions/cache@v1
+        with:
+          name: chromium-checkout
+          check-only: true
+      - id: checkout-cache
+""")
+        self.assertIn('.github/workflows/target.yml: its build must save the build directory once, and never the '
+                      'checkout, nor check it', self.problems())
 
     def test_the_chromium_checkout_job_restores_the_checkout_only_to_make_it(self):
         # Only once it knows the checkout for the key isn't saved, so that a run whose checkout is saved never
@@ -389,7 +436,7 @@ class WorkflowShape(unittest.TestCase):
         self.tearDown()
         self.setUp()
         self.edit('.github/workflows/startup.yml', restore, '')
-        self.assertTrue(any('must restore the marker, then ask for a work disk, restore the checkout' in p
+        self.assertTrue(any('must check the checkout, then ask for a work disk, restore the checkout and save it' in p
                             for p in self.problems()))
 
     def test_the_chromium_checkout_job_brings_the_checkout_up_to_date(self):
@@ -473,7 +520,7 @@ class WorkflowShape(unittest.TestCase):
             return result.returncode, output.read_text() if output.exists() else '', \
                 summary.read_text() if summary.exists() else ''
 
-    def test_the_checkout_is_made_unless_its_marker_is_for_the_key(self):
+    def test_the_checkout_is_made_unless_it_is_saved_for_the_key(self):
         for restored, make in (('pull_request_exact', 'false'), ('main_exact', 'false'), ('branch_exact', 'false'),
                                ('pull_request_newest', 'true'), ('main_newest', 'true'), ('branch_newest', 'true'),
                                ('none', 'true')):
@@ -522,30 +569,6 @@ class WorkflowShape(unittest.TestCase):
         self.setUp()
         self.edit('.github/workflows/startup.yml', "    if: inputs.checkout && (", "    if: (")
         self.assertTrue(any('in CD only for a commit that publishes' in p for p in self.problems()))
-
-    def test_the_chromium_checkout_job_saves_the_marker_after_the_checkout(self):
-        startup = self.repo/'.github/workflows/startup.yml'
-        text = startup.read_text()
-        checkout_at = text.index(f"{self.MAKES}{self.SAVES}          name: chromium-checkout\n")
-        marker_at = text.index(f"{self.MAKES}{self.SAVES}          name: chromium-checkout-saved\n")
-        checkout = text[checkout_at:text.index(self.MAKES, checkout_at + 1)]
-        marker = text[marker_at:]
-        swapped = text[:checkout_at] + marker + text[checkout_at + len(checkout):marker_at] + checkout
-        startup.write_text(swapped)
-        self.assertTrue(any('restore the checkout, save it, and save the marker, once each' in p
-                            for p in self.problems()))
-
-    def test_the_marker_is_saved_only_with_the_checkout_and_restored_every_time(self):
-        marker = f"{self.MAKES}{self.SAVES}          name: chromium-checkout-saved\n"
-        self.edit('.github/workflows/startup.yml', marker, marker.replace(self.MAKES, '      - '))
-        self.assertTrue(any('saves the marker' in p for p in self.problems()))
-        self.tearDown()
-        self.setUp()
-        self.edit('.github/workflows/startup.yml', """      - id: saved
-        uses:""", """      - id: saved
-        if: github.ref == 'refs/heads/main'
-        uses:""")
-        self.assertTrue(any('restores the marker every time' in p for p in self.problems()))
 
     def test_the_chromium_checkout_job_runs_on_amd64_for_all_but_forks(self):
         self.edit('.github/workflows/startup.yml', 'runs-on: lanescape-16vcpu-linux-amd64',
@@ -617,7 +640,7 @@ class WorkflowShape(unittest.TestCase):
           EOF
 """)
         self.assertIn('.github/workflows/target.yml: its build must save the build directory once, and never the '
-                      'checkout or its marker', self.problems())
+                      'checkout, nor check it', self.problems())
 
     def test_a_script_s_text_is_no_upload(self):
         self.edit('.github/workflows/target.yml', """      - name: Run the test embedder
@@ -636,7 +659,7 @@ class WorkflowShape(unittest.TestCase):
           path: /work/chromium/src/out/${{ inputs.target }}
 """, '')
         self.assertIn('.github/workflows/target.yml: its build must save the build directory once, and never the '
-                      'checkout or its marker', self.problems())
+                      'checkout, nor check it', self.problems())
 
     def test_only_the_build_and_the_chromium_checkout_job_have_a_disk_and_caches(self):
         self.edit('.github/workflows/target.yml', """    needs: build
@@ -824,22 +847,8 @@ class Caches(unittest.TestCase):
 
     def test_every_target_has_a_build_directory_cache(self):
         del self.runners['caches']['chromium-out-linux-arm64']
-        self.assertIn('.github/runners.json must declare chromium-checkout, its marker chromium-checkout-saved, and one '
-                      'chromium-out-<target> for each target in targets.json, and no other caches', self.problems())
-
-    def test_the_checkout_has_its_marker(self):
-        del self.runners['caches']['chromium-checkout-saved']
-        self.assertTrue(any('its marker chromium-checkout-saved' in p for p in self.problems()))
-
-    def test_the_marker_has_the_checkouts_key(self):
-        self.runners['caches']['chromium-checkout-saved']['from'].remove('chromium/pin.json')
-        self.assertTrue(any(p.startswith('.github/runners.json: chromium-checkout-saved must be keyed by exactly '
-                                         'chromium/gclient, chromium/patches/src.patch') for p in self.problems()))
-
-    def test_the_marker_lists_the_checkouts_files_the_same_way(self):
-        self.runners['caches']['chromium-checkout-saved']['from'].reverse()
-        self.assertEqual(self.problems(), ['.github/runners.json: chromium-checkout-saved must list exactly the files '
-                                           'chromium-checkout lists, in the same order'])
+        self.assertIn('.github/runners.json must declare chromium-checkout and one chromium-out-<target> for each '
+                      'target in targets.json, and no other caches', self.problems())
 
     def test_no_other_caches(self):
         self.runners['caches']['debian'] = {}
@@ -868,7 +877,7 @@ class Caches(unittest.TestCase):
     def test_a_new_patch_keys_both(self):
         (self.repo/'chromium/patches/third_party/skia.patch').write_text('')
         found = self.problems()
-        for name in ('chromium-checkout', 'chromium-checkout-saved', 'chromium-out-macos-arm64'):
+        for name in ('chromium-checkout', 'chromium-out-macos-arm64'):
             self.assertTrue(any(p.startswith(f'.github/runners.json: {name} must be keyed by exactly')
                                 and 'chromium/patches/third_party/skia.patch' in p for p in found))
 

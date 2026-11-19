@@ -43,13 +43,13 @@ jobs:
       contents: read
     steps:
       - uses: lanescape/runners/actions/checkout@v1
-      # Whether the checkout is saved for this key, from a marker saved with it, so that a run whose checkout is saved
-      # never downloads it here.
+      # Whether the checkout is saved for this key, without downloading it: the runner service records no choice for
+      # a check, so the run's first restore of the checkout still chooses.
       - id: saved
         uses: lanescape/runners/actions/cache@v1
         with:
-          name: chromium-checkout-saved
-          path: ${{ runner.temp }}/chromium-checkout-saved
+          name: chromium-checkout
+          check-only: true
       - id: needed
         name: Decide whether to make the checkout
         env:
@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! [[ "$RESTORED" =~ ^[a-z_]+$ ]]; then
-            echo "::error::The cache action didn't say where the marker came from"
+            echo "::error::The cache action didn't say where a restore of the checkout would come from"
             exit 1
           fi
           if [[ "$RESTORED" == *_exact ]]; then
@@ -65,8 +65,8 @@ jobs:
               >>"$GITHUB_STEP_SUMMARY"
             echo "make=false" >>"$GITHUB_OUTPUT"
           else
-            echo "- The checkout for this commit's key isn't saved (the marker: $RESTORED), so this job makes it" \
-              >>"$GITHUB_STEP_SUMMARY"
+            echo "- The checkout for this commit's key isn't saved (a restore would come from $RESTORED)," \
+              "so this job makes it" >>"$GITHUB_STEP_SUMMARY"
             echo "make=true" >>"$GITHUB_OUTPUT"
           fi
       - if: steps.needed.outputs.make == 'true'
@@ -76,8 +76,8 @@ jobs:
           iops: 10000
           throughput-mibps: 2400
       # For the rerun of a job lost to a preemption or the age limit, its resume image, which holds the lost job's work
-      # once the marker is written. Without the marker, anything there is a restore cut short, which the restore below
-      # mustn't mix with another version of the checkout.
+      # once /work/.libchromium-restored is written. Without it, anything there is a restore cut short, which the
+      # restore below mustn't mix with another version of the checkout.
       - id: work
         if: steps.needed.outputs.make == 'true'
         name: Find what the work disk holds
@@ -109,7 +109,7 @@ jobs:
           # The same for every target: one .gclient brings every target's dependencies, and the patches are shared.
           python3 scripts/sdk.py checkout linux-amd64
           python3 scripts/sdk.py patch linux-amd64
-      # Kept only if the job succeeds: the checkout, then its marker.
+      # Kept only if the job succeeds.
       - if: steps.needed.outputs.make == 'true'
         uses: lanescape/runners/actions/save-cache@v1
         with:
@@ -118,16 +118,3 @@ jobs:
           exclude: |
             lost+found
             .libchromium-restored
-      - if: steps.needed.outputs.make == 'true'
-        name: Mark the checkout saved
-        run: |
-          set -euo pipefail
-          marker="$RUNNER_TEMP/chromium-checkout-saved"
-          rm -rf "$marker"
-          mkdir "$marker"
-          echo "$GITHUB_SHA" >"$marker/commit"
-      - if: steps.needed.outputs.make == 'true'
-        uses: lanescape/runners/actions/save-cache@v1
-        with:
-          name: chromium-checkout-saved
-          path: ${{ runner.temp }}/chromium-checkout-saved
