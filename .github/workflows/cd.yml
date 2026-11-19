@@ -40,7 +40,7 @@ jobs:
 
   # The Chromium checkout only for a commit that publishes, so that an older commit's rerun never replaces main's
   # checkout with its own. A rerun of only an older run's failed jobs reuses its version decision, so it still can,
-  # as its builds can replace main's build directories, until the next run on main (specs/0003-ci-cd.md, CD).
+  # as its builds can replace main's build directories, until a later run on main remakes it (specs/0003-ci-cd.md, CD).
   startup:
     needs: version
     uses: ./.github/workflows/startup.yml
