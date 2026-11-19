@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tests.scripts.common import REPO
@@ -295,6 +296,163 @@ class Environment(unittest.TestCase):
                 os.environ.pop('TARGET', None)
             else:
                 os.environ['TARGET'] = saved
+
+
+class Explain(unittest.TestCase):
+    """Why Siso ran what it ran: counted in the job's summary and kept whole for the run's artifact, whether the build
+    passed or failed, and only ever this build's record."""
+
+    RECORD = (
+        'output obj/base/a.o older than most recent input ../../third_party/llvm-build/Release+Asserts/bin/clang++: '
+        'out:2026-11-17T22:20:00Z in:+1h\n'
+        'output obj/base/b.o older than most recent input ../../third_party/llvm-build/Release+Asserts/bin/clang++: '
+        'out:2026-11-17T22:20:00Z in:+1h\n'
+        'output obj/v8/c.o older than most recent input ../../build/linux/debian_bullseye_arm64-sysroot/usr/include/'
+        'stdio.h: out:2026-11-17T22:20:00Z in:+1h\n'
+        'deps for gen/d.h dirty: input out/linux-arm64/gen/d.mojom-module: dirty\n'
+        'output obj/e.o older than most recent input ../../weird dir/with: colon/e.h: out:2026-11-17T22:20:00Z '
+        'in:+1h\n'
+        'something Siso says another way about ../../secret/f.cc\n'
+        '\n'
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.out = root/'checkout/src/out/linux-arm64'
+        self.out.mkdir(parents=True)
+        self.temp = root/'runner-temp'
+        self.temp.mkdir()
+        self.step_summary = root/'summary.md'
+        self.saved = {name: os.environ.get(name) for name in ('LIBCHROMIUM_CHECKOUT', 'RUNNER_TEMP',
+                                                             'GITHUB_STEP_SUMMARY')}
+        os.environ.update(LIBCHROMIUM_CHECKOUT=str(root/'checkout'), RUNNER_TEMP=str(self.temp),
+                          GITHUB_STEP_SUMMARY=str(self.step_summary))
+        self.run = sdk.run
+
+    def tearDown(self):
+        sdk.run = self.run
+        for name, value in self.saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        self.tmp.cleanup()
+
+    def build(self, record=None, fails=False):
+        self.error = subprocess.CalledProcessError(1, ['autoninja'])
+        def autoninja(*command, **kwargs):
+            self.assertEqual(command[0], 'autoninja')
+            self.assertNotIn('-explain_log=', command)
+            self.assertFalse((self.out/'siso_explain').exists(), 'the build started with the last build\'s record')
+            if record is not None:
+                (self.out/'siso_explain').write_text(record)
+            if fails:
+                raise self.error
+            return 0
+        sdk.run = autoninja
+        args = sdk.argparse.Namespace(jobs=None)
+        if fails:
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                sdk.step_build('linux-arm64', args)
+            self.assertIs(raised.exception, self.error)
+        else:
+            sdk.step_build('linux-arm64', args)
+        return self.step_summary.read_text() if self.step_summary.exists() else ''
+
+    def kept(self):
+        return self.temp/'siso-explain-linux-arm64/siso_explain-linux-arm64.txt'
+
+    def test_the_reasons_are_counted_by_where_the_input_is(self):
+        written = self.build(self.RECORD)
+        self.assertEqual(written.splitlines(), [
+            '- Siso explained 6 entries for linux-arm64:',
+            '- 2: an input is newer, under third_party/llvm-build/Release+Asserts/bin',
+            '- 1: a dependency ran, under out/linux-arm64/gen',
+            '- 1: an input is newer, under build/linux/debian_bullseye_arm64-sysroot/usr',
+            '- 1: an input is newer, under weird dir/with: colon',
+            '- 1: another reason (the record has it)',
+        ])
+        self.assertEqual(self.kept().read_text(), self.RECORD)
+
+    def test_a_failed_build_is_explained_and_still_fails(self):
+        written = self.build(self.RECORD, fails=True)
+        self.assertIn('- Siso explained 6 entries for linux-arm64:', written)
+        self.assertTrue(self.kept().is_file())
+
+    def test_the_cached_record_is_never_reported(self):
+        (self.out/'siso_explain').write_text(self.RECORD)
+        written = self.build()
+        self.assertEqual(written, '- Siso explained nothing for linux-arm64\n')
+        self.assertFalse(self.kept().exists())
+
+    def test_only_so_many_reasons_are_counted(self):
+        record = ''.join(f'deps for x dirty: input d{n}/x.h: dirty\n' for n in (1, 2, 3, 1, 3))
+        counted, sdk.REASONS_COUNTED = sdk.REASONS_COUNTED, 2
+        try:
+            written = self.build(record)
+        finally:
+            sdk.REASONS_COUNTED = counted
+        self.assertEqual(written.splitlines(), [
+            '- Siso explained 5 entries for linux-arm64:', '- 2: a dependency ran, under d1',
+            '- 1: a dependency ran, under d2', '- 2: reasons past the first 2 kinds, not counted (the record has them)'])
+
+    def test_only_fixed_words_and_directories_reach_the_summary(self):
+        self.assertNotIn('secret', self.build(self.RECORD))
+
+    def test_a_report_that_fails_never_fails_the_build(self):
+        def unreadable(target):
+            raise PermissionError(13, 'Permission denied')
+        explain, sdk.explain = sdk.explain, unreadable
+        try:
+            self.build(self.RECORD)
+        finally:
+            sdk.explain = explain
+
+    def test_a_report_that_fails_never_replaces_the_builds_own_error(self):
+        def unwritable(*args, **kwargs):
+            raise UnicodeEncodeError('ascii', 'é', 0, 1, 'ordinal not in range(128)')
+        summary, sdk.summary = sdk.summary, unwritable
+        try:
+            with unittest.mock.patch('builtins.print', unwritable):
+                self.build(self.RECORD, fails=True)
+        finally:
+            sdk.summary = summary
+
+    def test_the_record_is_kept_even_if_the_summary_cannot_be_written(self):
+        def unwritable(line):
+            raise OSError(28, 'No space left on device')
+        with unittest.mock.patch.object(sdk, 'summary', unwritable):
+            self.build(self.RECORD)
+        self.assertEqual(self.kept().read_text(), self.RECORD)
+
+    def test_an_earlier_builds_kept_record_never_stands_for_this_one(self):
+        self.kept().parent.mkdir(parents=True)
+        self.kept().write_text('an earlier build\'s')
+        self.build()
+        self.assertFalse(self.kept().exists())
+
+    def test_a_copy_cut_short_is_never_kept(self):
+        def short(source, destination):
+            Path(destination).write_text('part of the rec')
+            raise OSError(28, 'No space left on device')
+        with unittest.mock.patch('shutil.copyfile', short):
+            self.build(self.RECORD)
+        self.assertEqual(list((self.temp/'siso-explain-linux-arm64').iterdir()), [])
+
+    def test_a_last_record_that_cannot_be_removed_still_builds_unexplained(self):
+        (self.out/'siso_explain').mkdir()
+        built = []
+        def autoninja(*command, **kwargs):
+            built.append(command)
+            return 0
+        sdk.run = autoninja
+        sdk.step_build('linux-arm64', sdk.argparse.Namespace(jobs=None))
+        # With no record at all, which Siso could fail to start for, rotating the old one.
+        self.assertEqual([command[:2] for command in built], [('autoninja', '-explain_log=')])
+        self.assertEqual(self.step_summary.read_text(),
+                         "- Siso's last record for linux-arm64 could not be removed, so this build is not explained\n")
+        self.assertFalse(self.kept().exists())
 
 
 class DepotTools(unittest.TestCase):

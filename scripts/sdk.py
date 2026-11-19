@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -482,9 +483,102 @@ def step_configure(target, args):
 
 # build
 
+SISO_EXPLAIN = 'siso_explain'
+# Siso's two reasons for a step, as it writes them: an output older than an input, and a step whose dependency ran.
+NEWER_INPUT = re.compile(r'output (.+) older than most recent input (.+): out:\S* in:\S*')
+DIRTY_DEPENDENCY = re.compile(r'deps for (.+) dirty: input (.+): dirty')
+# Enough to show what dominates; the artifact keeps the whole record.
+REASONS_SHOWN = 12
+REASONS_COUNTED = 1000
+
+
+def where(path):
+    """Up to four directories of the file Siso names, relative to the checkout's src, so that what rebuilds for one
+    reason counts together."""
+    parts = [part for part in path.split('/') if part not in ('', '.', '..')]
+    return '/'.join(parts[:-1][:4]) or '.'
+
+
+def explain_line(line):
+    """Why Siso ran one step, as the job's summary counts it. Only these fixed words and a directory: the record
+    itself is kept as an artifact."""
+    if match := NEWER_INPUT.fullmatch(line):
+        return f'an input is newer, under {where(match.group(2))}'
+    if match := DIRTY_DEPENDENCY.fullmatch(line):
+        return f'a dependency ran, under {where(match.group(2))}'
+    return 'another reason (the record has it)'
+
+
+def kept_explanation(target):
+    """Where the build keeps Siso's record for the artifact siso-explain-<target>, or None outside a job."""
+    temp = os.environ.get('RUNNER_TEMP')
+    return Path(temp)/f'siso-explain-{target}'/f'{SISO_EXPLAIN}-{target}.txt' if temp else None
+
+
+def explain(target):
+    """Says why Siso ran what it ran in this build, from its own record: how many entries, and the commonest reasons
+    in the job's summary; and keeps the record for the run's artifact siso-explain-<target>
+    (specs/0003-ci-cd.md, CI)."""
+    record = out_dir(target)/SISO_EXPLAIN
+    if not record.is_file():
+        summary(f'Siso explained nothing for {target}')
+        return
+    # Kept first, so the artifact has the record even if the summary can't be written. Whole or not at all: a copy
+    # cut short is never uploaded as the record.
+    copy = kept_explanation(target)
+    if copy:
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        partial = copy.with_name(copy.name+'.partial')
+        try:
+            shutil.copyfile(record, partial)
+            os.replace(partial, copy)
+        finally:
+            partial.unlink(missing_ok=True)
+    entries, uncounted, reasons = 0, 0, {}
+    with open(record, encoding='utf-8', errors='replace') as lines:
+        for line in lines:
+            line = line.rstrip('\n')
+            if not line.strip():
+                continue
+            entries += 1
+            reason = explain_line(line)
+            if reason in reasons or len(reasons) < REASONS_COUNTED:
+                reasons[reason] = reasons.get(reason, 0) + 1
+            else:
+                uncounted += 1
+    summary(f'Siso explained {entries} entries for {target}:')
+    for reason, count in sorted(reasons.items(), key=lambda item: (-item[1], item[0]))[:REASONS_SHOWN]:
+        summary(f'{count}: {reason}')
+    if uncounted:
+        summary(f'{uncounted}: reasons past the first {REASONS_COUNTED} kinds, not counted (the record has them)')
+
+
 def step_build(target, args):
     jobs = ['-j', str(args.jobs)] if args.jobs else []
-    run('autoninja', *jobs, '-C', out_dir(target), 'libchromium', cwd=checkout_root()/'src')
+    # A restored build directory holds the last build's record, and only this build's may be reported. If it can't be
+    # removed, the build still runs, unexplained, and with no record, which Siso could otherwise fail to start for.
+    try:
+        (out_dir(target)/SISO_EXPLAIN).unlink(missing_ok=True)
+        if copy := kept_explanation(target):
+            copy.unlink(missing_ok=True)
+        fresh, unexplained = True, []
+    except OSError:
+        fresh, unexplained = False, ['-explain_log=']
+    try:
+        run('autoninja', *jobs, *unexplained, '-C', out_dir(target), 'libchromium', cwd=checkout_root()/'src')
+    finally:
+        # Only a report, whether the build passed or failed: nothing in it may fail a build, or replace the error a
+        # failed one raised.
+        try:
+            if fresh:
+                explain(target)
+            else:
+                summary(f'Siso\'s last record for {target} could not be removed, so this build is not explained')
+        except Exception:
+            try:
+                print('Could not say why Siso ran what it ran', flush=True)
+            except Exception:
+                pass
 
 
 def step_package(target, args):
