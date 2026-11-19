@@ -84,3 +84,12 @@ runs:
         retention-days: 1
         compression-level: 0
         if-no-files-found: error
+    # Siso's whole record of why it ran what it ran, which the build's summary counts (specs/0003-ci-cd.md, CI).
+    # Last, once the package is handed on; a failed upload still fails the job, before it saves its caches.
+    - name: Keep Siso's explanation
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: siso-explain-${{ inputs.target }}
+        path: ${{ runner.temp }}/siso-explain-${{ inputs.target }}/siso_explain-${{ inputs.target }}.txt
+        retention-days: 1
+        if-no-files-found: ignore
