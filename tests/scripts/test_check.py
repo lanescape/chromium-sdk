@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,21 +49,21 @@ class WorkflowShape(unittest.TestCase):
                 self.assertIn(f'.github/workflows/{workflow}: linux-arm64 must have exactly contents: read',
                               self.problems())
 
-    def test_every_chain_needs_the_checks(self):
+    def test_every_chain_needs_startup(self):
         self.edit('.github/workflows/ci.yml', """  macos-arm64:
     name: macos-arm64
-    needs: checks""", """  macos-arm64:
+    needs: startup""", """  macos-arm64:
     name: macos-arm64""")
-        self.assertIn('.github/workflows/ci.yml: macos-arm64 must need exactly checks', self.problems())
+        self.assertIn('.github/workflows/ci.yml: macos-arm64 must need exactly startup', self.problems())
 
     def test_ci_chains_skip_forks(self):
         self.edit('.github/workflows/ci.yml', """  linux-amd64:
     name: linux-amd64
-    needs: checks
+    needs: startup
     if: github.event.pull_request.head.repo.full_name == github.repository
 """, """  linux-amd64:
     name: linux-amd64
-    needs: checks
+    needs: startup
 """)
         self.assertTrue(any('linux-amd64 must run only for this repository' in p for p in self.problems()))
 
@@ -72,9 +73,9 @@ class WorkflowShape(unittest.TestCase):
                       self.problems())
 
     def test_publish_needs_every_chain(self):
-        self.edit('.github/workflows/cd.yml', 'needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]',
-                  'needs: [version, checks, linux-amd64, linux-arm64]')
-        self.assertIn(".github/workflows/cd.yml: publish must need version, checks and every target's chain, and run "
+        self.edit('.github/workflows/cd.yml', 'needs: [version, startup, linux-amd64, linux-arm64, macos-arm64]',
+                  'needs: [version, startup, linux-amd64, linux-arm64]')
+        self.assertIn(".github/workflows/cd.yml: publish must need version, startup and every target's chain, and run "
                       "only if they all succeed", self.problems())
 
     def test_the_chain_is_build_embedder_test(self):
@@ -122,12 +123,12 @@ class WorkflowShape(unittest.TestCase):
                       self.problems())
 
     def test_publish_runs_only_if_every_chain_succeeded(self):
-        self.edit('.github/workflows/cd.yml', """    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]
-""", """    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]
+        self.edit('.github/workflows/cd.yml', """    needs: [version, startup, linux-amd64, linux-arm64, macos-arm64]
+""", """    needs: [version, startup, linux-amd64, linux-arm64, macos-arm64]
     if: always()
 """)
         problems = self.problems()
-        self.assertIn(".github/workflows/cd.yml: publish must need version, checks and every target's chain, and run "
+        self.assertIn(".github/workflows/cd.yml: publish must need version, startup and every target's chain, and run "
                       "only if they all succeed", problems)
         self.assertTrue(any('no job or step may run past a failure' in p for p in problems))
 
@@ -143,7 +144,7 @@ class WorkflowShape(unittest.TestCase):
         for workflow, old, new in (
                 ('target.yml', '    needs: embedder\n', '    needs: embedder\n    continue-on-error: true\n'),
                 ('target.yml', '    needs: build\n', '    needs: build\n    if: ${{ !cancelled() }}\n'),
-                ('checks.yml', '      - name: Script tests\n', '      - name: Script tests\n'
+                ('startup.yml', '      - name: Script tests\n', '      - name: Script tests\n'
                                                                '        continue-on-error: true\n')):
             with self.subTest(workflow=workflow, new=new):
                 self.tearDown()
@@ -192,8 +193,8 @@ class WorkflowShape(unittest.TestCase):
     def test_keys_are_plain_and_followed_by_their_colon(self):
         for workflow, old, new in (
                 ('cd.yml', '  version:\n', '  "version":\n'),
-                ('cd.yml', '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n',
-                 '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n'
+                ('cd.yml', '    needs: [version, startup, linux-amd64, linux-arm64, macos-arm64]\n',
+                 '    needs: [version, startup, linux-amd64, linux-arm64, macos-arm64]\n'
                  '    "if": ${{ success() || !success() }}\n'),
                 ('target.yml', '      - name: Run the test embedder\n',
                  '      - name: Run the test embedder\n        continue-on-error : true\n'),
@@ -208,8 +209,8 @@ class WorkflowShape(unittest.TestCase):
     def test_the_yaml_has_no_structure_the_check_cannot_read(self):
         for workflow, old, new, problem in (
                 ('cd.yml', '  version:\n    name: Version\n', '  version:\n     name: Version\n', 'indent'),
-                ('cd.yml', '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n',
-                 '    needs: [version, checks, linux-amd64, linux-arm64, macos-arm64]\n    <<: *publish\n',
+                ('cd.yml', '    needs: [version, startup, linux-amd64, linux-arm64, macos-arm64]\n',
+                 '    needs: [version, startup, linux-amd64, linux-arm64, macos-arm64]\n    <<: *publish\n',
                  'plain key'),
                 ('cd.yml', '    runs-on: lanescape-2vcpu-linux-amd64\n    permissions:\n      contents: write\n',
                  '    runs-on: lanescape-2vcpu-linux-amd64\n    permissions: { contents: write, id-token: write }\n',
@@ -221,21 +222,21 @@ class WorkflowShape(unittest.TestCase):
                 self.edit(f'.github/workflows/{workflow}', old, new)
                 self.assertTrue(any(f'.github/workflows/{workflow}:' in p and problem in p for p in self.problems()))
 
-    def test_a_chain_needs_nothing_but_the_checks(self):
+    def test_a_chain_needs_nothing_but_startup(self):
         self.edit('.github/workflows/ci.yml', """  linux-amd64:
     name: linux-amd64
-    needs: checks""", """  linux-amd64:
+    needs: startup""", """  linux-amd64:
     name: linux-amd64
-    needs: [checks, linux-arm64]""")
-        self.assertIn('.github/workflows/ci.yml: linux-amd64 must need exactly checks', self.problems())
+    needs: [startup, linux-arm64]""")
+        self.assertIn('.github/workflows/ci.yml: linux-amd64 must need exactly startup', self.problems())
 
-    def test_a_cd_chain_needs_nothing_but_the_checks_and_version(self):
+    def test_a_cd_chain_needs_nothing_but_startup_and_version(self):
         self.edit('.github/workflows/cd.yml', """  linux-amd64:
     name: linux-amd64
-    needs: [version, checks]""", """  linux-amd64:
+    needs: [version, startup]""", """  linux-amd64:
     name: linux-amd64
-    needs: [version, checks, macos-arm64]""")
-        self.assertIn('.github/workflows/cd.yml: linux-amd64 must need exactly checks and version', self.problems())
+    needs: [version, startup, macos-arm64]""")
+        self.assertIn('.github/workflows/cd.yml: linux-amd64 must need exactly startup and version', self.problems())
 
     def test_ci_runs_nothing_else_for_a_fork(self):
         self.edit('.github/workflows/ci.yml', """jobs:
@@ -248,7 +249,7 @@ class WorkflowShape(unittest.TestCase):
       - run: true
 
 """)
-        self.assertTrue(any("ci.yml must have no jobs but checks and the calls" in p for p in self.problems()))
+        self.assertTrue(any("ci.yml must have no jobs but startup and the calls" in p for p in self.problems()))
 
     def test_artifacts_are_kept_a_day(self):
         for path, old, new in (
@@ -326,39 +327,262 @@ class WorkflowShape(unittest.TestCase):
                 self.edit(f'.github/workflows/{workflow}', old, new)
                 self.assertIn(f'.github/workflows/{workflow}: {problem}', self.problems())
 
-    def test_only_linux_amd64_saves_the_checkout(self):
-        saves = '        uses: lanescape/runners/actions/save-cache@v1\n        with:\n'
+    SAVES = '        uses: lanescape/runners/actions/save-cache@v1\n        with:\n'
+    MAKES = "      - if: steps.needed.outputs.make == 'true'\n"
+
+    def test_only_the_chromium_checkout_job_saves_the_checkout(self):
+        checkout = f"""{self.MAKES}{self.SAVES}          name: chromium-checkout
+          path: /work
+          exclude: |
+            lost+found
+            .libchromium-restored
+"""
         for old, new in (
-                ("      - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n",
-                 '      - if: "!endsWith(steps.restored.outputs.checkout, \'_exact\')"\n'),
-                ("      - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n",
-                 "      - if: inputs.target != 'macos-arm64' && !endsWith(steps.restored.outputs.checkout, '_exact')\n"),
-                (f"""{saves}          name: chromium-checkout
-          path: /work
-""", f"""{saves}          name: chromium-checkout
-          path: /work/chromium
-"""),
-                ("""            .libchromium-restored
-            chromium/src/out
-""", """            .libchromium-restored
-"""),
-                (f"""{saves}          name: chromium-checkout
-          path: /work
-""", f"""{saves}          name: 'chromium-checkout'
-          path: /work
-""")):
+                (checkout, checkout.replace(self.MAKES, '      - ')),
+                (checkout, checkout.replace("make == 'true'", "make != 'false'")),
+                (checkout, checkout.replace('path: /work\n', 'path: /work/chromium\n')),
+                (checkout, checkout.replace('            lost+found\n', '            lost+found\n            depot_tools\n')),
+                (checkout, checkout.replace('name: chromium-checkout', "name: 'chromium-checkout'")),
+                (checkout, checkout.replace('            .libchromium-restored\n', '')),
+                (checkout, checkout.replace('          exclude: |\n', '          exclude: >\n'))):
             with self.subTest(new=new):
                 self.tearDown()
                 self.setUp()
-                self.edit('.github/workflows/target.yml', old, new)
-                self.assertTrue(any('only linux-amd64 saves the checkout' in p for p in self.problems()))
+                self.edit('.github/workflows/startup.yml', old, new)
+                self.assertTrue(any('only the Chromium checkout job saves the checkout' in p for p in self.problems()))
+
+    def test_the_build_never_saves_the_checkout(self):
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@v1
+        with:
+          name: chromium-out-${{ inputs.target }}
+""", """      - if: steps.needed.outputs.make == 'true'
+        uses: lanescape/runners/actions/save-cache@v1
+        with:
+          name: chromium-checkout
+          path: /work
+          exclude: |
+            lost+found
+      - uses: lanescape/runners/actions/save-cache@v1
+        with:
+          name: chromium-out-${{ inputs.target }}
+""")
+        self.assertIn('.github/workflows/target.yml: its build must save the build directory once, and never the '
+                      'checkout or its marker', self.problems())
+
+    def test_the_chromium_checkout_job_restores_the_checkout_only_to_make_it(self):
+        # Only once it knows the checkout for the key isn't saved, so that a run whose checkout is saved never
+        # downloads it there.
+        restore = """      - if: steps.needed.outputs.make == 'true' && steps.work.outputs.resumed != 'true'
+        uses: lanescape/runners/actions/cache@v1
+        with:
+          name: chromium-checkout
+"""
+        for new in (restore.replace(" && steps.work.outputs.resumed != 'true'", ''),
+                    restore.replace("      - if: steps.needed.outputs.make == 'true' && steps.work.outputs.resumed != 'true'\n"
+                                    "        uses:", '      - uses:')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/startup.yml', restore, new)
+                self.assertTrue(any("restore the checkout to /work, if: steps.needed.outputs.make == 'true' && "
+                                    "steps.work.outputs.resumed != 'true'" in p for p in self.problems()))
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/startup.yml', restore, '')
+        self.assertTrue(any('must restore the marker, then ask for a work disk, restore the checkout' in p
+                            for p in self.problems()))
+
+    def test_the_chromium_checkout_job_brings_the_checkout_up_to_date(self):
+        for old, new in (
+                ('          python3 scripts/sdk.py checkout linux-amd64\n          python3 scripts/sdk.py patch linux-amd64\n',
+                 '          true\n'),
+                ('          python3 scripts/sdk.py checkout linux-amd64\n          python3 scripts/sdk.py patch linux-amd64\n',
+                 '          python3 scripts/sdk.py patch linux-amd64\n          python3 scripts/sdk.py checkout linux-amd64\n'),
+                ("""      - if: steps.needed.outputs.make == 'true'
+        name: Check out and patch Chromium
+""", """      - name: Check out and patch Chromium
+"""),
+                ('          # The same for every target', '          # python3 scripts/sdk.py checkout linux-amd64\n          # The same for every target'),
+                ('          touch /work/.libchromium-restored\n', ''),
+                ('          touch /work/.libchromium-restored\n', '          touch /work/.libchromium-restored\n          exit 0\n'),
+                ('          LIBCHROMIUM_CHECKOUT: /work/chromium\n', '          LIBCHROMIUM_CHECKOUT: /tmp/chromium\n'),
+                ('          python3 scripts/sdk.py checkout linux-amd64\n', '          true || python3 scripts/sdk.py checkout linux-amd64\n'),
+                ('        run: |\n          set -euo pipefail\n          # Written first',
+                 '        run: >\n          set -euo pipefail\n          # Written first'),
+                ('          DEPOT_TOOLS: /work/depot_tools\n        run: |\n          set -euo pipefail\n          # Written first',
+                 '          DEPOT_TOOLS: /work/depot_tools\n        shell: sh\n        run: |\n          set -euo pipefail\n          # Written first')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/startup.yml', old, new)
+                found = self.problems()
+                if new.startswith('          # python3'):
+                    self.assertEqual(found, [])
+                else:
+                    self.assertTrue(any('the Chromium checkout job must run exactly' in p for p in found))
+
+    def test_a_build_restores_the_checkout_then_its_build_directory(self):
+        target = self.repo/'.github/workflows/target.yml'
+        text = target.read_text()
+        first = text.index("      - id: checkout-cache\n")
+        second = text.index("      - if: steps.work.outputs.resumed != 'true'\n", first)
+        after = text.index("      - name: Reconcile", second)
+        target.write_text(text[:first] + text[second:after] + text[first:second] + text[after:])
+        self.assertIn('.github/workflows/target.yml: its build must restore the checkout, then its build directory '
+                      'inside it, once each', self.problems())
+
+    def test_a_build_asks_for_its_disk_before_it_restores(self):
+        target = self.repo/'.github/workflows/target.yml'
+        text = target.read_text()
+        start = text.index('      - uses: lanescape/runners/actions/disk@v1\n')
+        disk = text[start:text.index('      - uses: lanescape/runners/actions/checkout@v1\n', start)]
+        text = text.replace(disk, '', 1)
+        at = text.index('      - name: Reconcile')
+        target.write_text(text[:at] + disk + text[at:])
+        self.assertIn('.github/workflows/target.yml: its build must ask for its work disk before it restores anything',
+                      self.problems())
+
+    def test_startup_s_scripts_run_in_bash(self):
+        for old, new in (('    runs-on: lanescape-16vcpu-linux-amd64\n',
+                          '    runs-on: lanescape-16vcpu-linux-amd64\n    defaults:\n      run:\n        shell: /usr/bin/true {0}\n'),
+                         ('defaults:\n  run:\n    shell: bash\n', 'defaults:\n  run:\n    shell: sh\n')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/startup.yml', old, new)
+                self.assertIn(".github/workflows/startup.yml: its scripts must run in bash, by the workflow's defaults "
+                              "alone", self.problems())
+
+    def test_ci_makes_the_checkout(self):
+        self.edit('.github/workflows/startup.yml', '        default: true\n', '        default: false\n')
+        self.assertIn('.github/workflows/startup.yml: its input checkout must default to true, so that CI makes the '
+                      'checkout', self.problems())
+
+    def decide(self, restored):
+        """Runs the Chromium checkout job's decision as GitHub would, and returns its output and summary."""
+        text = (REPO/'.github/workflows/startup.yml').read_text().splitlines()
+        at = text.index('        name: Decide whether to make the checkout')
+        start = text.index('        run: |', at) + 1
+        end = next(i for i in range(start, len(text)) if text[i].strip() and not text[i].startswith('          '))
+        script = '\n'.join(line[10:] for line in text[start:end])
+        with tempfile.TemporaryDirectory() as tmp:
+            output, summary = Path(tmp)/'output', Path(tmp)/'summary'
+            result = subprocess.run(['bash', '-c', script], env={'RESTORED': restored, 'GITHUB_OUTPUT': str(output),
+                                                                 'GITHUB_STEP_SUMMARY': str(summary), 'PATH': '/usr/bin:/bin'},
+                                    capture_output=True, text=True)
+            return result.returncode, output.read_text() if output.exists() else '', \
+                summary.read_text() if summary.exists() else ''
+
+    def test_the_checkout_is_made_unless_its_marker_is_for_the_key(self):
+        for restored, make in (('pull_request_exact', 'false'), ('main_exact', 'false'), ('branch_exact', 'false'),
+                               ('pull_request_newest', 'true'), ('main_newest', 'true'), ('branch_newest', 'true'),
+                               ('none', 'true')):
+            with self.subTest(restored=restored):
+                code, output, summary = self.decide(restored)
+                self.assertEqual((code, output), (0, f'make={make}\n'))
+                self.assertIn(restored, summary)
+        for restored in ('', 'main exact', 'main_exact\nmake=true'):
+            with self.subTest(restored=restored):
+                code, output, _ = self.decide(restored)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(output, '')
+
+    def test_a_build_restores_its_caches_unless_it_resumes(self):
+        for name in ('chromium-checkout', 'chromium-out-${{ inputs.target }}'):
+            with self.subTest(name=name):
+                self.tearDown()
+                self.setUp()
+                text = (self.repo/'.github/workflows/target.yml').read_text()
+                at = text.index(f'          name: {name}\n')
+                resumes = "if: steps.work.outputs.resumed != 'true'"
+                guard = text.rindex(resumes, 0, at)
+                (self.repo/'.github/workflows/target.yml').write_text(
+                    text[:guard] + resumes.replace('!=', '==') + text[guard + len(resumes):])
+                self.assertTrue(any("if: steps.work.outputs.resumed != 'true'" in p and 'restore the' in p
+                                    for p in self.problems()))
+
+    def test_checks_and_the_checkout_run_side_by_side(self):
+        self.edit('.github/workflows/startup.yml', """    name: Chromium checkout
+""", """    name: Chromium checkout
+    needs: checks
+""")
+        self.assertIn('.github/workflows/startup.yml: checks and checkout must need nothing, so they run side by side',
+                      self.problems())
+
+    def test_cd_makes_the_checkout_only_for_a_commit_that_publishes(self):
+        for old, new in (("      checkout: ${{ needs.version.outputs.publish == 'true' }}\n", ''),
+                         ('  startup:\n    needs: version\n', '  startup:\n')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/cd.yml', old, new)
+                self.assertIn(".github/workflows/cd.yml: startup must need version and pass checkout: "
+                              "${{ needs.version.outputs.publish == 'true' }}", self.problems())
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/startup.yml', "    if: inputs.checkout && (", "    if: (")
+        self.assertTrue(any('in CD only for a commit that publishes' in p for p in self.problems()))
+
+    def test_the_chromium_checkout_job_saves_the_marker_after_the_checkout(self):
+        startup = self.repo/'.github/workflows/startup.yml'
+        text = startup.read_text()
+        checkout_at = text.index(f"{self.MAKES}{self.SAVES}          name: chromium-checkout\n")
+        marker_at = text.index(f"{self.MAKES}{self.SAVES}          name: chromium-checkout-saved\n")
+        checkout = text[checkout_at:text.index(self.MAKES, checkout_at + 1)]
+        marker = text[marker_at:]
+        swapped = text[:checkout_at] + marker + text[checkout_at + len(checkout):marker_at] + checkout
+        startup.write_text(swapped)
+        self.assertTrue(any('restore the checkout, save it, and save the marker, once each' in p
+                            for p in self.problems()))
+
+    def test_the_marker_is_saved_only_with_the_checkout_and_restored_every_time(self):
+        marker = f"{self.MAKES}{self.SAVES}          name: chromium-checkout-saved\n"
+        self.edit('.github/workflows/startup.yml', marker, marker.replace(self.MAKES, '      - '))
+        self.assertTrue(any('saves the marker' in p for p in self.problems()))
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/startup.yml', """      - id: saved
+        uses:""", """      - id: saved
+        if: github.ref == 'refs/heads/main'
+        uses:""")
+        self.assertTrue(any('restores the marker every time' in p for p in self.problems()))
+
+    def test_the_chromium_checkout_job_runs_on_amd64_for_all_but_forks(self):
+        self.edit('.github/workflows/startup.yml', 'runs-on: lanescape-16vcpu-linux-amd64',
+                  'runs-on: lanescape-16vcpu-linux-arm64')
+        self.assertTrue(any("checkout must run on the runner service's amd64 machines" in p for p in self.problems()))
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/startup.yml', """    name: Chromium checkout
+    if: inputs.checkout && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+""", """    name: Chromium checkout
+    if: inputs.checkout
+""")
+        self.assertTrue(any("checkout must run for every run but a fork's pull request" in p for p in self.problems()))
+
+    def test_startup_has_the_checks_and_the_checkout(self):
+        self.edit('.github/workflows/startup.yml', """  checks:
+    name: Checks
+""", """  checks:
+    name: Checks
+    if: github.ref == 'refs/heads/main'
+""")
+        self.assertIn('.github/workflows/startup.yml: checks must always run', self.problems())
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/ci.yml', 'uses: ./.github/workflows/startup.yml', 'uses: ./.github/workflows/checks.yml')
+        self.assertIn('.github/workflows/ci.yml: its startup job must call startup.yml', self.problems())
 
     def test_the_build_directory_is_saved_alone(self):
-        self.edit('.github/workflows/target.yml', """          name: chromium-out-${{ inputs.target }}
+        self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@v1
+        with:
+          name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
-      - if: inputs.target == 'linux-amd64'""", """          name: chromium-out-${{ inputs.target }}
+""", """      - uses: lanescape/runners/actions/save-cache@v1
+        with:
+          name: chromium-out-${{ inputs.target }}
           path: /work/chromium
-      - if: inputs.target == 'linux-amd64'""")
+""")
         self.assertTrue(any('save the build directory alone' in p for p in self.problems()))
 
     def test_the_build_directory_is_saved_every_time(self):
@@ -372,9 +596,11 @@ class WorkflowShape(unittest.TestCase):
 
     def test_the_build_directory_is_saved_whole(self):
         self.edit('.github/workflows/target.yml', """          path: /work/chromium/src/out/${{ inputs.target }}
-      - if: inputs.target == 'linux-amd64'""", """          path: /work/chromium/src/out/${{ inputs.target }}
+
+  embedder:""", """          path: /work/chromium/src/out/${{ inputs.target }}
           exclude: .libchromium-built-from.json
-      - if: inputs.target == 'linux-amd64'""")
+
+  embedder:""")
         self.assertTrue(any('save the build directory alone, whole, every time' in p for p in self.problems()))
 
     def test_a_script_s_text_is_no_step(self):
@@ -390,8 +616,8 @@ class WorkflowShape(unittest.TestCase):
               path: /work/chromium/src/out/${{ inputs.target }}
           EOF
 """)
-        self.assertIn('.github/workflows/target.yml: its build must save the build directory once and the checkout '
-                      'once', self.problems())
+        self.assertIn('.github/workflows/target.yml: its build must save the build directory once, and never the '
+                      'checkout or its marker', self.problems())
 
     def test_a_script_s_text_is_no_upload(self):
         self.edit('.github/workflows/target.yml', """      - name: Run the test embedder
@@ -403,31 +629,16 @@ class WorkflowShape(unittest.TestCase):
 """)
         self.assertEqual(self.problems(), [])
 
-    def test_both_caches_are_saved(self):
+    def test_the_build_directory_is_saved(self):
         self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
 """, '')
-        self.assertIn('.github/workflows/target.yml: its build must save the build directory once and the checkout '
-                      'once', self.problems())
+        self.assertIn('.github/workflows/target.yml: its build must save the build directory once, and never the '
+                      'checkout or its marker', self.problems())
 
-    def test_the_checkout_s_exclusions_are_a_literal_block_in_its_with(self):
-        excludes = """          exclude: |
-            lost+found
-            .libchromium-restored
-            chromium/src/out
-"""
-        for new in ('          exclude: >\n            lost+found\n            .libchromium-restored\n'
-                    '            chromium/src/out\n',
-                    '        env:\n' + excludes.replace('          ', '          ', 1)):
-            with self.subTest(new=new):
-                self.tearDown()
-                self.setUp()
-                self.edit('.github/workflows/target.yml', excludes, new)
-                self.assertTrue(any('only linux-amd64 saves the checkout' in p for p in self.problems()))
-
-    def test_only_the_build_has_a_disk_and_caches(self):
+    def test_only_the_build_and_the_chromium_checkout_job_have_a_disk_and_caches(self):
         self.edit('.github/workflows/target.yml', """    needs: build
     runs-on: lanescape-16vcpu-linux-amd64
     steps:
@@ -439,7 +650,8 @@ class WorkflowShape(unittest.TestCase):
           name: chromium-checkout
           path: /work
 """)
-        self.assertTrue(any("only target.yml's build has a work disk and caches" in p for p in self.problems()))
+        self.assertTrue(any("only target.yml's build and startup.yml's Chromium checkout job have a work disk and "
+                            "caches" in p for p in self.problems()))
 
     def test_no_disk_is_saved(self):
         self.edit('.github/workflows/target.yml', """      - uses: lanescape/runners/actions/save-cache@""",
@@ -458,6 +670,25 @@ class WorkflowShape(unittest.TestCase):
                 self.edit('.github/workflows/target.yml', old, new)
                 self.assertTrue(any('the build asks for its work disk, every time, as iops: 10000, size-gb: 150, '
                                     'throughput-mibps: 2400' in p for p in self.problems()))
+
+    def test_the_chromium_checkout_job_asks_for_its_disk_only_to_make_the_checkout(self):
+        disk = """      - if: steps.needed.outputs.make == 'true'
+        uses: lanescape/runners/actions/disk@v1
+        with:
+          size-gb: 150
+"""
+        for new in (disk.replace("      - if: steps.needed.outputs.make == 'true'\n        uses:", '      - uses:'),
+                    disk.replace('size-gb: 150', 'size-gb: 50')):
+            with self.subTest(new=new):
+                self.tearDown()
+                self.setUp()
+                self.edit('.github/workflows/startup.yml', disk, new)
+                self.assertTrue(any('the Chromium checkout job asks for its work disk only to make the checkout' in p
+                                    for p in self.problems()))
+        self.tearDown()
+        self.setUp()
+        self.edit('.github/workflows/startup.yml', disk, '')
+        self.assertTrue(any('then ask for a work disk' in p for p in self.problems()))
 
     def test_a_disk_in_another_case_or_file(self):
         # A second disk, its owner in another case, counts as the build's second.
@@ -593,8 +824,22 @@ class Caches(unittest.TestCase):
 
     def test_every_target_has_a_build_directory_cache(self):
         del self.runners['caches']['chromium-out-linux-arm64']
-        self.assertIn('.github/runners.json must declare chromium-checkout and one chromium-out-<target> for each '
-                      'target in targets.json, and no other caches', self.problems())
+        self.assertIn('.github/runners.json must declare chromium-checkout, its marker chromium-checkout-saved, and one '
+                      'chromium-out-<target> for each target in targets.json, and no other caches', self.problems())
+
+    def test_the_checkout_has_its_marker(self):
+        del self.runners['caches']['chromium-checkout-saved']
+        self.assertTrue(any('its marker chromium-checkout-saved' in p for p in self.problems()))
+
+    def test_the_marker_has_the_checkouts_key(self):
+        self.runners['caches']['chromium-checkout-saved']['from'].remove('chromium/pin.json')
+        self.assertTrue(any(p.startswith('.github/runners.json: chromium-checkout-saved must be keyed by exactly '
+                                         'chromium/gclient, chromium/patches/src.patch') for p in self.problems()))
+
+    def test_the_marker_lists_the_checkouts_files_the_same_way(self):
+        self.runners['caches']['chromium-checkout-saved']['from'].reverse()
+        self.assertEqual(self.problems(), ['.github/runners.json: chromium-checkout-saved must list exactly the files '
+                                           'chromium-checkout lists, in the same order'])
 
     def test_no_other_caches(self):
         self.runners['caches']['debian'] = {}
@@ -623,7 +868,7 @@ class Caches(unittest.TestCase):
     def test_a_new_patch_keys_both(self):
         (self.repo/'chromium/patches/third_party/skia.patch').write_text('')
         found = self.problems()
-        for name in ('chromium-checkout', 'chromium-out-macos-arm64'):
+        for name in ('chromium-checkout', 'chromium-checkout-saved', 'chromium-out-macos-arm64'):
             self.assertTrue(any(p.startswith(f'.github/runners.json: {name} must be keyed by exactly')
                                 and 'chromium/patches/third_party/skia.patch' in p for p in found))
 

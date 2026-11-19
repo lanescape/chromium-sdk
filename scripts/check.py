@@ -12,13 +12,18 @@ USES = re.compile(r'^\s*(?:-\s+)?uses:\s+(?:"([^"\s]+)"|\'([^\'\s]+)\'|([^\s"\']
 
 
 TARGET_WORKFLOW = './.github/workflows/target.yml'
-CHECKS_WORKFLOW = './.github/workflows/checks.yml'
+STARTUP_WORKFLOW = './.github/workflows/startup.yml'
 FORK_GUARD = 'github.event.pull_request.head.repo.full_name == github.repository'
+# The Chromium checkout job runs for every run but a fork's pull request, and in CD only for a commit that publishes.
+CHECKOUT_GUARD = f"inputs.checkout && (github.event_name != 'pull_request' || {FORK_GUARD})"
+CD_CHECKOUT = {'checkout': "${{ needs.version.outputs.publish == 'true' }}"}
+# Caches are kept by architecture, and every build runs on amd64.
+CHECKOUT_RUNNER = re.compile(r'lanescape-[0-9]+vcpu-linux-amd64(-spot)?')
 PUBLISHES = "needs.version.outputs.publish == 'true'"
 BUILD_RUNNER = 'lanescape-80vcpu-linux-amd64-spot'
-# The build's work disk (specs/0003-ci-cd.md, Caches): as large as a checkout and a build directory need, and as fast as
-# moving their many small files in and out of caches needs.
-BUILD_DISK = ('iops: 10000', 'size-gb: 150', 'throughput-mibps: 2400')
+# The work disk of the build and of the Chromium checkout job (specs/0003-ci-cd.md, Caches): as large as a checkout and
+# a build directory need, and as fast as moving their many small files in and out of caches needs.
+WORK_DISK = ('iops: 10000', 'size-gb: 150', 'throughput-mibps: 2400')
 READ = {'contents': 'read'}
 
 
@@ -161,8 +166,21 @@ def top_level(path, key):
     return values[0] if values else None
 
 
-SAVES_CHECKOUT = "if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')"
-CHECKOUT_EXCLUDES = {'lost+found', '.libchromium-restored', 'chromium/src/out'}
+# The Chromium checkout job's steps after its decision run only if the checkout for the key isn't saved.
+MAKES_CHECKOUT = "if: steps.needed.outputs.make == 'true'"
+# A build restores its caches unless it carries on from a resume image.
+RESTORES = "if: steps.work.outputs.resumed != 'true'"
+# The Chromium checkout job restores the checkout only to make it, and not on its own resume image.
+MAKES_FROM_CACHE = "if: steps.needed.outputs.make == 'true' && steps.work.outputs.resumed != 'true'"
+CHECKOUT_CACHE = ('name: chromium-checkout', 'path: /work')
+OUT_CACHE = ('name: chromium-out-${{ inputs.target }}', 'path: /work/chromium/src/out/${{ inputs.target }}')
+# What the Chromium checkout job runs to bring the checkout up to date, the same for every target, in /work: first the
+# marker that keeps a rerun on its resume image from restoring again.
+MAKE_CHECKOUT = ('set -euo pipefail', 'touch /work/.libchromium-restored', 'python3 scripts/sdk.py checkout linux-amd64',
+                 'python3 scripts/sdk.py patch linux-amd64')
+MAKE_CHECKOUT_ENV = ('DEPOT_TOOLS: /work/depot_tools', 'LIBCHROMIUM_CHECKOUT: /work/chromium')
+CHECKOUT_EXCLUDES = {'lost+found', '.libchromium-restored'}
+CHECKOUT_MARKER = ('name: chromium-checkout-saved', 'path: ${{ runner.temp }}/chromium-checkout-saved')
 
 
 def block_lines(step, key):
@@ -184,57 +202,87 @@ def block_lines(step, key):
     return found
 
 
-def service_step_problems(relative, number, lines, job, action, saves):
-    """The runner service's work disk and caches (specs/0003-ci-cd.md, Caches): only target.yml's build has them,
-    and only linux-amd64 saves the checkout, once for each key, so no cache ever holds the Apple SDK, which the
-    macOS build puts in its checkout."""
+def service_step_problems(relative, number, lines, job, action, uses):
+    """The runner service's work disks and caches (specs/0003-ci-cd.md, Caches): only target.yml's build and
+    startup.yml's Chromium checkout job have them. The build restores the checkout and its build directory unless it
+    resumes, and saves its build directory every time and never the checkout. The Chromium checkout job restores the
+    marker, and only if the checkout for the key isn't saved, the checkout, which it saves, and then the marker. Each
+    use is recorded in `uses` as (job, what, line), for the order and counts that workflow_problems checks."""
     found = []
     step = step_lines(lines, number - 1)
     given = step_keys(step, 'with')
+    conditions = [key for key in step_keys(step) if key.startswith('if:')]
     if action not in ('disk', 'cache', 'save-cache'):
         return [f'{relative}:{number}: the runner service keeps no disks; use lanescape/runners\' actions disk, '
                 'cache and save-cache']
-    if relative != '.github/workflows/target.yml' or job != 'build':
-        return [f'{relative}:{number}: only target.yml\'s build has a work disk and caches']
+    if (relative, job) == ('.github/workflows/target.yml', 'build'):
+        where = 'build'
+    elif (relative, job) == ('.github/workflows/startup.yml', 'checkout'):
+        where = 'checkout'
+    else:
+        return [f'{relative}:{number}: only target.yml\'s build and startup.yml\'s Chromium checkout job have a work '
+                'disk and caches']
     if action == 'disk':
-        saves.append('disk')
-        if sorted(given) != list(BUILD_DISK) or any(key.startswith('if:') for key in step_keys(step)):
-            found.append(f'{relative}:{number}: the build asks for its work disk, every time, as '
-                         f'{", ".join(BUILD_DISK)}')
-    if action == 'save-cache' and 'name: chromium-out-${{ inputs.target }}' in given:
-        saves.append('chromium-out')
+        uses.append((where, 'disk', number))
+        wanted = [] if where == 'build' else [MAKES_CHECKOUT]
+        if sorted(given) != list(WORK_DISK) or conditions != wanted:
+            who = 'the build asks for its work disk, every time,' if where == 'build' else \
+                f'the Chromium checkout job asks for its work disk only to make the checkout, {MAKES_CHECKOUT},'
+            found.append(f'{relative}:{number}: {who} as {", ".join(WORK_DISK)}')
+    elif action == 'cache':
+        name = next((key for key in given if key.startswith('name:')), '')
+        if name == 'name: chromium-checkout-saved':
+            uses.append((where, 'restore-marker', number))
+            if sorted(given) != sorted(CHECKOUT_MARKER) or conditions:
+                found.append(f'{relative}:{number}: the Chromium checkout job restores the marker every time, from '
+                             '${{ runner.temp }}/chromium-checkout-saved')
+        elif name == 'name: chromium-checkout':
+            uses.append((where, 'restore-checkout', number))
+            wanted = [RESTORES] if where == 'build' else [MAKES_FROM_CACHE]
+            if sorted(given) != sorted(CHECKOUT_CACHE) or conditions != wanted:
+                found.append(f'{relative}:{number}: restore the checkout to /work, {wanted[0]}')
+        else:
+            uses.append((where, 'restore-out', number))
+            if sorted(given) != sorted(OUT_CACHE) or conditions != [RESTORES]:
+                found.append(f'{relative}:{number}: restore the build directory to '
+                             f'/work/chromium/src/out/${{{{ inputs.target }}}}, {RESTORES}')
+    elif 'name: chromium-out-${{ inputs.target }}' in given:
+        uses.append((where, 'save-out', number))
         if sorted(given) != ['name: chromium-out-${{ inputs.target }}',
-                             'path: /work/chromium/src/out/${{ inputs.target }}'] or \
-                any(key.startswith('if:') for key in step_keys(step)):
+                             'path: /work/chromium/src/out/${{ inputs.target }}'] or conditions:
             found.append(f'{relative}:{number}: save the build directory alone, whole, every time, '
                          'from /work/chromium/src/out/${{ inputs.target }}')
-    elif action == 'save-cache':
-        saves.append('chromium-checkout')
-        # Anything else it saves is the checkout, as below.
-        conditions = [key for key in step_keys(step) if key.startswith('if:')]
-        if conditions != [SAVES_CHECKOUT] or 'name: chromium-checkout' not in given or 'path: /work' not in given or \
+    elif 'name: chromium-checkout-saved' in given:
+        uses.append((where, 'save-marker', number))
+        if sorted(given) != sorted(CHECKOUT_MARKER) or conditions != [MAKES_CHECKOUT]:
+            found.append(f'{relative}:{number}: the Chromium checkout job saves the marker, from '
+                         f'${{{{ runner.temp }}}}/chromium-checkout-saved, only when it makes the checkout, '
+                         f'{MAKES_CHECKOUT}')
+    else:
+        # Anything else saved is the checkout, as below.
+        uses.append((where, 'save-checkout', number))
+        if conditions != [MAKES_CHECKOUT] or 'name: chromium-checkout' not in given or 'path: /work' not in given or \
                 set(block_lines(step, 'exclude')) != CHECKOUT_EXCLUDES:
-            found.append(f'{relative}:{number}: only linux-amd64 saves the checkout, from /work, when it wasn\'t '
-                         f'restored for its key, {SAVES_CHECKOUT}, leaving out exactly '
-                         + ', '.join(sorted(CHECKOUT_EXCLUDES)))
+            found.append(f'{relative}:{number}: only the Chromium checkout job saves the checkout, from /work, when '
+                         f'it makes it, {MAKES_CHECKOUT}, leaving out exactly ' + ', '.join(sorted(CHECKOUT_EXCLUDES)))
     return found
 
 
 def workflow_problems(repo):
     """The workflows' shape (specs/0003-ci-cd.md, CI): one chain per target, build → embedder → test, each gated by
-    the checks and failing alone, CD's publish needing every chain, and the OIDC token only where the Apple SDK is
-    fetched."""
+    startup, its checks and its Chromium checkout, and failing alone, CD's publish needing every chain, and the OIDC
+    token only where the Apple SDK is fetched."""
     found = []
     for path in yaml_files(repo):
         found += yaml_subset_problems(path, path.relative_to(repo).as_posix())
     workflows = repo/'.github/workflows'
     targets = json.loads((repo/'targets.json').read_text())
-    workflow = {name: workflow_jobs(workflows/name) for name in ('checks.yml', 'ci.yml', 'cd.yml', 'target.yml')}
+    workflow = {name: workflow_jobs(workflows/name) for name in ('startup.yml', 'ci.yml', 'cd.yml', 'target.yml')}
 
     # Permissions: none by default, `contents: read` for a job, with three exceptions. Each call of target.yml grants
     # its chain `contents: read`, and the macOS call also `id-token: write`; target.yml's build and embedder take
     # their call's grant; CD's publish job alone writes.
-    for name in ('checks.yml', 'ci.yml', 'cd.yml'):
+    for name in ('startup.yml', 'ci.yml', 'cd.yml'):
         if top_level(workflows/name, 'permissions') != '{}':
             found.append(f'.github/workflows/{name} must set `permissions: {{}}` for the whole workflow')
     if top_level(workflows/'target.yml', 'permissions') is not None:
@@ -266,17 +314,17 @@ def workflow_problems(repo):
                 found.append(f'{relative}:{number}: no job or step may run past a failure, or hide one')
     for name in ('ci.yml', 'cd.yml'):
         jobs = workflow[name]
-        if jobs.get('checks', {}).get('uses') != CHECKS_WORKFLOW:
-            found.append(f'.github/workflows/{name}: its checks job must call checks.yml')
+        if jobs.get('startup', {}).get('uses') != STARTUP_WORKFLOW:
+            found.append(f'.github/workflows/{name}: its startup job must call startup.yml')
         calls = {job_name: job for job_name, job in jobs.items() if job.get('uses') == TARGET_WORKFLOW}
         if sorted(job['with'].get('target', '') for job in calls.values()) != sorted(targets):
             found.append(f'.github/workflows/{name} must call target.yml once for each target in targets.json')
-        if name == 'ci.yml' and set(jobs) != {'checks', *calls}:
-            found.append('.github/workflows/ci.yml must have no jobs but checks and the calls of target.yml, so that a '
+        if name == 'ci.yml' and set(jobs) != {'startup', *calls}:
+            found.append('.github/workflows/ci.yml must have no jobs but startup and the calls of target.yml, so that a '
                          'fork\'s pull request runs only the checks')
         for job_name, job in calls.items():
-            # Each chain needs the checks (and in CD the version) and nothing else, so it fails alone.
-            needs = ['checks'] if name == 'ci.yml' else ['checks', 'version']
+            # Each chain needs startup (and in CD the version) and nothing else, so it fails alone.
+            needs = ['startup'] if name == 'ci.yml' else ['startup', 'version']
             if sorted(job['needs']) != needs:
                 found.append(f'.github/workflows/{name}: {job_name} must need exactly ' + ' and '.join(needs))
             if name == 'ci.yml' and job.get('if') != FORK_GUARD:
@@ -292,12 +340,36 @@ def workflow_problems(repo):
                 found.append(f'.github/workflows/{name}: {job_name} must run only if the version job says it publishes')
         if name == 'cd.yml':
             publish = jobs.get('publish', {'needs': []})
-            if not {'version', 'checks', *calls} <= set(publish['needs']) or 'if' in publish:
-                found.append('.github/workflows/cd.yml: publish must need version, checks and every target\'s chain, '
-                             'and run only if they all succeed')
-    for job_name, job in workflow['checks.yml'].items():
-        if 'if' in job:
-            found.append(f'.github/workflows/checks.yml: {job_name} must always run')
+            if not {'version', 'startup', *calls} <= set(publish['needs']) or 'if' in publish:
+                found.append('.github/workflows/cd.yml: publish must need version, startup and every target\'s '
+                             'chain, and run only if they all succeed')
+    # Startup: the checks, always, and the Chromium checkout job, for every run but a fork's pull request, on amd64.
+    startup = workflow['startup.yml']
+    if set(startup) != {'checks', 'checkout'}:
+        found.append('.github/workflows/startup.yml: its jobs must be checks and checkout')
+    if 'if' in startup.get('checks', {}):
+        found.append('.github/workflows/startup.yml: checks must always run')
+    if startup.get('checkout', {}).get('if') != CHECKOUT_GUARD:
+        found.append(f'.github/workflows/startup.yml: checkout must run for every run but a fork\'s pull request, and '
+                     f'in CD only for a commit that publishes, if: {CHECKOUT_GUARD}')
+    # Every script runs in bash, as the workflow's defaults say: no job sets a shell of its own.
+    if not re.search(r'^defaults:\n  run:\n    shell: bash\n', (workflows/'startup.yml').read_text(), re.M) or \
+            any('defaults' in job for job in startup.values()):
+        found.append('.github/workflows/startup.yml: its scripts must run in bash, by the workflow\'s defaults alone')
+    if startup.get('checkout', {}).get('needs') or startup.get('checks', {}).get('needs'):
+        found.append('.github/workflows/startup.yml: checks and checkout must need nothing, so they run side by side')
+    for name, needs, given in (('ci.yml', [], {}), ('cd.yml', ['version'], CD_CHECKOUT)):
+        call = workflow[name].get('startup', {'needs': [], 'with': {}})
+        if call['needs'] != needs or call['with'] != given:
+            found.append(f'.github/workflows/{name}: startup must need ' + (' and '.join(needs) or 'nothing') +
+                         ' and pass ' + (', '.join(f'{key}: {value}' for key, value in given.items()) or 'nothing'))
+    if not re.search(r'^on:\n  workflow_call:\n    inputs:\n      checkout:\n(        [a-z]+: .*\n)*?        default: true\n',
+                     (workflows/'startup.yml').read_text(), re.M):
+        found.append('.github/workflows/startup.yml: its input checkout must default to true, so that CI makes the '
+                     'checkout')
+    if not CHECKOUT_RUNNER.fullmatch(startup.get('checkout', {}).get('runs-on', '')):
+        found.append('.github/workflows/startup.yml: checkout must run on the runner service\'s amd64 machines, as '
+                     'the builds do, since caches are kept by architecture')
 
     # The chain: build → embedder → test, the 80-vCPU machine for the build alone, the test on its target's machine.
     chain = workflow['target.yml']
@@ -318,7 +390,7 @@ def workflow_problems(repo):
                                                      for target, entry in targets.items()}:
         found.append('.github/workflows/target.yml: the test must run on targets.json\'s test_runner for its target')
 
-    saves = []
+    uses = []
     for path in yaml_files(repo):
         relative = path.relative_to(repo).as_posix()
         lines = path.read_text().splitlines()
@@ -347,7 +419,7 @@ def workflow_problems(repo):
             # GitHub reads an owner and repository in any case.
             service = re.fullmatch(r'lanescape/runners/actions/([a-z-]+)@.*', used, re.IGNORECASE)
             if service and service.group(1).lower() != 'checkout':
-                found += service_step_problems(relative, number, lines, job, service.group(1).lower(), saves)
+                found += service_step_problems(relative, number, lines, job, service.group(1).lower(), uses)
             if used == './.github/actions/apple-sdk':
                 # In its own step, guarded by its own condition, in a job its call's grant reaches.
                 guarded = [key for key in step_keys(step_lines(lines, number - 1)) if key.startswith('if:')]
@@ -355,20 +427,60 @@ def workflow_problems(repo):
                         guarded != ["if: inputs.target == 'macos-arm64'"]:
                     found.append(f'{relative}:{number}: only target.yml\'s build and embedder may fetch the Apple SDK, '
                                  'and only for macos-arm64')
-    if saves.count('disk') != 1:
+    build = [what for where, what, _ in uses if where == 'build']
+    if [what for what in build if what in ('disk', 'restore-checkout', 'restore-out')][:1] != ['disk']:
+        found.append('.github/workflows/target.yml: its build must ask for its work disk before it restores anything')
+    checkout = [(what, number) for where, what, number in uses if where == 'checkout']
+    if build.count('disk') != 1:
         found.append('.github/workflows/target.yml: its build must ask for its work disk once')
-    saves = [what for what in saves if what != 'disk']
-    if sorted(saves) != ['chromium-checkout', 'chromium-out']:
-        found.append('.github/workflows/target.yml: its build must save the build directory once and the checkout once')
+    if sorted(what for what in build if what.startswith('save')) != ['save-out'] or 'restore-marker' in build:
+        found.append('.github/workflows/target.yml: its build must save the build directory once, and never the '
+                     'checkout or its marker')
+    if [what for what in build if what.startswith('restore')] != ['restore-checkout', 'restore-out']:
+        found.append('.github/workflows/target.yml: its build must restore the checkout, then its build directory '
+                     'inside it, once each')
+    order = ['restore-marker', 'disk', 'restore-checkout', 'save-checkout', 'save-marker']
+    if [what for what, _ in checkout] != order:
+        found.append('.github/workflows/startup.yml: its Chromium checkout job must restore the marker, then ask for a '
+                     'work disk, restore the checkout, save it, and save the marker, once each')
+    else:
+        found += make_checkout_problems(repo, dict(checkout))
     return found
+
+
+def make_checkout_problems(repo, lines):
+    """The Chromium checkout job brings the checkout it restored up to date, in /work, in one step of its own that runs
+    only when it makes the checkout, between restoring it and saving it, and that does nothing else."""
+    relative = '.github/workflows/startup.yml'
+    text = (repo/relative).read_text().splitlines()
+    scripts = in_block_scalars(text)
+    found = [number for number in range(lines['restore-checkout'], lines['save-checkout'] - 1)
+             if number in scripts and text[number].strip() == MAKE_CHECKOUT[-1]]
+    problem = [f'{relative}: the Chromium checkout job must run exactly {"; ".join(MAKE_CHECKOUT)}, as a literal '
+               f'block in the workflow\'s shell, with {", ".join(MAKE_CHECKOUT_ENV)}, in one step of its own, '
+               f'{MAKES_CHECKOUT}, after it restores the checkout and before it saves it']
+    if len(found) != 1:
+        return problem
+    step = step_lines(text, found[0])
+    # Where the step starts: the nearest place above its script that holds it whole.
+    start = next(at for at in range(found[0], -1, -1) if text[at:at + len(step)] == step)
+    script = [text[number].strip() for number in range(start, start + len(step))
+              if number in scripts and text[number].strip() and not text[number].strip().startswith('#')]
+    keys = step_keys(step)
+    if script != list(MAKE_CHECKOUT) or sorted(step_keys(step, 'env')) != list(MAKE_CHECKOUT_ENV) or \
+            [key for key in keys if key.startswith('if:')] != [MAKES_CHECKOUT] or 'run: |' not in keys or \
+            any(key.startswith('shell:') for key in keys):
+        return problem
+    return []
 
 
 CACHE_NAME = re.compile(r'[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?')
 
 
 def cache_problems(repo):
-    """.github/runners.json's caches (specs/0003-ci-cd.md, Caches): the checkout, keyed by what decides its files,
-    and each target's build directory, keyed by everything that decides what its build compiles."""
+    """.github/runners.json's caches (specs/0003-ci-cd.md, Caches): the checkout and its marker, keyed by what decides
+    the checkout's files, and each target's build directory, keyed by everything that decides what its build
+    compiles."""
     found = []
     targets = json.loads((repo/'targets.json').read_text())
     runners = json.loads((repo/'.github/runners.json').read_text())
@@ -381,9 +493,9 @@ def cache_problems(repo):
         if not CACHE_NAME.fullmatch(name):
             found.append(f'.github/runners.json: {name} is not a cache name: 1 to 32 of a-z, 0-9 and -, starting with '
                          'a letter and not ending with -')
-    if set(caches) != {'chromium-checkout', *(f'chromium-out-{target}' for target in targets)}:
-        found.append('.github/runners.json must declare chromium-checkout and one chromium-out-<target> for each '
-                     'target in targets.json, and no other caches')
+    if set(caches) != {'chromium-checkout', 'chromium-checkout-saved', *(f'chromium-out-{t}' for t in targets)}:
+        found.append('.github/runners.json must declare chromium-checkout, its marker chromium-checkout-saved, and one '
+                     'chromium-out-<target> for each target in targets.json, and no other caches')
     patches = sorted(p.relative_to(repo).as_posix() for p in (repo/'chromium/patches').glob('**/*.patch'))
     gn = sorted(p.relative_to(repo).as_posix() for p in (repo/'chromium/gn').iterdir())
     # The checkout's files: the pin, .gclient, and the patches, which it's saved with.
@@ -395,9 +507,14 @@ def cache_problems(repo):
         for path in listed:
             if not (repo/path).is_file():
                 found.append(f'.github/runners.json: {name} names {path}, which does not exist')
-        keyed = checkout if name == 'chromium-checkout' else out
+        # The marker is saved with the checkout, so it's keyed by the same files, listed the same way.
+        keyed = checkout if name in ('chromium-checkout', 'chromium-checkout-saved') else out
         if sorted(listed) != keyed:
             found.append(f'.github/runners.json: {name} must be keyed by exactly {", ".join(keyed)}')
+    marker = caches.get('chromium-checkout-saved')
+    if isinstance(marker, dict) and marker.get('from') != caches.get('chromium-checkout', {}).get('from'):
+        found.append('.github/runners.json: chromium-checkout-saved must list exactly the files chromium-checkout '
+                     'lists, in the same order')
     return found
 
 
