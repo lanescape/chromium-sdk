@@ -9,6 +9,15 @@
         "chromium/pin.json"
       ]
     },
+    "chromium-checkout-saved": {
+      "from": [
+        "chromium/gclient",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "chromium/pin.json"
+      ]
+    },
     "chromium-out-linux-amd64": {
       "from": [
         "chromium/args.gn",

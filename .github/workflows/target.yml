@@ -1,6 +1,6 @@
 name: Target
 
-# One target's chain, build → embedder → test, called once per target by ci.yml and cd.yml after their checks
+# One target's chain, build → embedder → test, called once per target by ci.yml and cd.yml after startup.yml
 # (specs/0003-ci-cd.md). Each job needs the one before, so a failure stops its own target's chain alone, and no
 # machine starts after a failed step.
 #
@@ -58,8 +58,9 @@ jobs:
           else
             echo "resumed=false" >>"$GITHUB_OUTPUT"
           fi
-      # The caches (specs/0003-ci-cd.md, Caches): the checkout, with depot_tools, that every target shares, then this
-      # target's build directory inside it. A resumed disk has them already, with the lost job's work since.
+      # The caches (specs/0003-ci-cd.md, Caches): the checkout, with depot_tools, that every target shares and
+      # startup.yml's Chromium checkout job saves, then this target's build directory inside it. A resumed disk has them
+      # already, with the lost job's work since.
       - id: checkout-cache
         if: steps.work.outputs.resumed != 'true'
         uses: lanescape/runners/actions/cache@v1
@@ -71,8 +72,7 @@ jobs:
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
-      - id: restored
-        name: Reconcile the build directory with the checkout
+      - name: Reconcile the build directory with the checkout
         env:
           TARGET: ${{ inputs.target }}
           RESUMED: ${{ steps.work.outputs.resumed }}
@@ -94,7 +94,13 @@ jobs:
             echo "::error::$marker does not say where the checkout came from"
             exit 1
           fi
-          echo "checkout=$restored" >>"$GITHUB_OUTPUT"
+          # Anything but the checkout for this key is brought up to date by this build's checkout and patch steps.
+          if [ "$restored" = none ]; then
+            echo "- No checkout was restored: this build checks out Chromium itself" >>"$GITHUB_STEP_SUMMARY"
+          elif [[ "$restored" != *_exact ]]; then
+            echo "- The checkout restored ($restored) is for another key: this build brings it up to date itself" \
+              >>"$GITHUB_STEP_SUMMARY"
+          fi
       - id: version
         name: Version
         env:
@@ -121,21 +127,11 @@ jobs:
           version: ${{ steps.version.outputs.version }}
           release: ${{ inputs.release }}
           apple-sdk-archive: ${{ steps.apple-sdk.outputs.archive }}
-      # Saved only if the job succeeds. The build directory every time; the checkout once for each key, by
-      # linux-amd64 alone: macOS adds the Apple SDK to it, which no cache may hold.
+      # Saved every time, if the job succeeds: the build directory. The checkout is startup.yml's to save.
       - uses: lanescape/runners/actions/save-cache@v1
         with:
           name: chromium-out-${{ inputs.target }}
           path: /work/chromium/src/out/${{ inputs.target }}
-      - if: inputs.target == 'linux-amd64' && !endsWith(steps.restored.outputs.checkout, '_exact')
-        uses: lanescape/runners/actions/save-cache@v1
-        with:
-          name: chromium-checkout
-          path: /work
-          exclude: |
-            lost+found
-            .libchromium-restored
-            chromium/src/out
 
   embedder:
     name: Embedder ${{ inputs.target }}
