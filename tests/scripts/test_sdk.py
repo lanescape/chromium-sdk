@@ -532,6 +532,138 @@ class DepotTools(unittest.TestCase):
         self.assertEqual(calls, ['bootstrap', 'wanted'])
 
 
+class Sync(unittest.TestCase):
+    """A move to another pin deletes what the new pin dropped, keeping unchanged files' times unless gclient can't
+    move it in place, even after a stop; a sync at the same pin, with no move unfinished, isn't a move."""
+
+    OLD, NEW = 'a'*40, 'b'*40
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)/'checkout'
+        (self.root/'src/.git').mkdir(parents=True)
+        self.head = self.OLD
+        self.ran = []
+        # gclient commands that fail, each as many times as it's listed.
+        self.failing = []
+        self.saved = sdk.run, sdk.ensure_depot_tools, sdk.wanted_checkout, sdk.checkout_root, sdk.unpatch, \
+            os.environ.get('GITHUB_STEP_SUMMARY')
+        self.wanted = {'pin': {'tag': '1.2.3.4', 'commit': self.NEW}, 'gclient': 'g'}
+        self.summary = Path(self.tmp.name)/'summary'
+        os.environ['GITHUB_STEP_SUMMARY'] = str(self.summary)
+
+        def run(*command, cwd=None, check=True, capture=False, quiet=False):
+            command = [str(part) for part in command]
+            self.ran.append(command)
+            if command[:1] == ['gclient'] and command[1] in self.failing:
+                self.failing.remove(command[1])
+                if check:
+                    raise subprocess.CalledProcessError(1, command)
+                return 1
+            if command[-2:] == ['rev-parse', 'HEAD']:
+                return self.head+'\n'
+            if command[-2:] == ['rev-parse', 'FETCH_HEAD']:
+                return self.NEW+'\n'
+            if 'checkout' in command and '--detach' in command:
+                self.head = command[-1]
+            return '' if capture else 0
+        sdk.run = run
+        sdk.ensure_depot_tools = lambda: None
+        sdk.wanted_checkout = lambda: self.wanted
+        sdk.checkout_root = lambda: self.root
+        sdk.unpatch = lambda src: self.ran.append(['unpatch'])
+
+    def tearDown(self):
+        sdk.run, sdk.ensure_depot_tools, sdk.wanted_checkout, sdk.checkout_root, sdk.unpatch, summary = self.saved
+        if summary is None:
+            os.environ.pop('GITHUB_STEP_SUMMARY', None)
+        else:
+            os.environ['GITHUB_STEP_SUMMARY'] = summary
+        self.tmp.cleanup()
+
+    def syncs(self):
+        return [command[2:] for command in self.ran if command[:2] == ['gclient', 'sync']]
+
+    def checkout(self):
+        sdk.step_checkout('linux-amd64', None)
+
+    IN_PLACE = ['--nohooks', '--no-history', '--reset', '-D', '-r', 'src@'+NEW]
+    FORCED = ['--nohooks', '--no-history', '--force', '--reset', '-D', '-r', 'src@'+NEW]
+
+    def test_a_move_deletes_what_the_new_pin_dropped_in_place(self):
+        self.checkout()
+        # Not --force, which with -D would clone again every dependency the move changes.
+        self.assertEqual(self.syncs(), [self.IN_PLACE])
+        self.assertFalse(sdk.moving_record().exists())
+        self.assertEqual(json.loads(sdk.checkout_record().read_text()), self.wanted)
+        self.assertFalse(self.summary.exists())
+
+    def test_a_move_gclient_cant_make_in_place_is_made_again_with_force(self):
+        self.failing = ['sync']
+        self.checkout()
+        self.assertEqual(self.syncs(), [self.IN_PLACE, self.FORCED])
+        self.assertIn('`--force`', self.summary.read_text())
+        self.assertFalse(sdk.moving_record().exists())
+        self.assertEqual(json.loads(sdk.checkout_record().read_text()), self.wanted)
+
+    def test_a_summary_that_cant_be_written_doesnt_stop_the_retry(self):
+        self.summary.mkdir()
+        self.failing = ['sync']
+        self.checkout()
+        self.assertEqual(self.syncs(), [self.IN_PLACE, self.FORCED])
+        self.assertEqual(json.loads(sdk.checkout_record().read_text()), self.wanted)
+
+    def test_a_move_is_marked_before_src_leaves_its_pin(self):
+        def unpatch(src):
+            self.assertTrue(sdk.moving_record().exists())
+            raise SystemExit('stopped')
+        sdk.unpatch = unpatch
+        with self.assertRaises(SystemExit):
+            self.checkout()
+        self.assertEqual(self.head, self.OLD)
+
+    def test_a_move_stopped_after_src_reached_the_pin_still_syncs_as_a_move(self):
+        for failing in (['sync', 'sync'], ['runhooks']):
+            with self.subTest(failing=failing):
+                self.head, self.ran, self.failing = self.OLD, [], list(failing)
+                sdk.moving_record().unlink(missing_ok=True)
+                with self.assertRaises(subprocess.CalledProcessError):
+                    self.checkout()
+                self.assertEqual(self.head, self.NEW)
+                self.assertTrue(sdk.moving_record().exists())
+                self.assertFalse(sdk.checkout_record().exists())
+                self.ran = []
+                self.checkout()
+                self.assertNotIn(['unpatch'], self.ran)
+                self.assertEqual(self.syncs(), [self.IN_PLACE])
+                self.assertFalse(sdk.moving_record().exists())
+                sdk.checkout_record().unlink()
+
+    def test_a_sync_at_the_same_pin_is_not_a_move(self):
+        # Another .gclient at the pin.
+        self.head = self.NEW
+        self.checkout()
+        self.assertEqual(self.syncs(), [['--nohooks', '--no-history', '--force', '-r', 'src@'+self.NEW]])
+        self.assertNotIn(['unpatch'], self.ran)
+        self.assertFalse(sdk.moving_record().exists())
+
+    def test_a_sync_while_a_move_for_another_pin_is_unfinished_is_a_move(self):
+        # A move was marked, perhaps after another one left src here part-way, then the pin came back to src's.
+        self.head = self.NEW
+        sdk.moving_record().touch()
+        self.checkout()
+        self.assertEqual(self.syncs(), [self.IN_PLACE])
+        self.assertNotIn(['unpatch'], self.ran)
+        self.assertFalse(sdk.moving_record().exists())
+
+    def test_a_whole_checkout_at_the_pin_is_left_alone(self):
+        self.head = self.NEW
+        sdk.checkout_record().write_text(json.dumps(self.wanted)+'\n')
+        (self.root/'.gclient').write_text((REPO/'chromium/gclient').read_text())
+        self.checkout()
+        self.assertFalse(any(command[:1] == ['gclient'] for command in self.ran))
+
+
 if __name__ == '__main__':
     unittest.main()
 

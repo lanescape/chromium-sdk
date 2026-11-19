@@ -119,6 +119,14 @@ def checkout_record():
     return checkout_root()/'.libchromium-checkout.json'
 
 
+def moving_record():
+    """Marks a move to another pin that hasn't finished: written before src leaves its pin, and removed once the
+    sync and the hooks are done, so a machine stopped after src reached the new pin still syncs as for a move. A
+    sync while any move is unfinished, whatever pin it was for, is a move, so a move abandoned part-way, even for
+    another that was abandoned too, is never taken for a finished one."""
+    return checkout_root()/'.libchromium-moving'
+
+
 def wanted_checkout():
     return {'pin': pin(), 'gclient': gclient_digest()}
 
@@ -175,15 +183,36 @@ def step_checkout(target, args):
     fetched = run('git', '-C', src, 'rev-parse', 'FETCH_HEAD', capture=True).strip()
     if fetched != commit:
         raise SystemExit(f'tag {wanted["pin"]["tag"]} is {fetched}, not the pinned {commit}')
+    moving = moving_record()
     if head != commit:
+        moving.touch()
         # Patched files would stop the checkout; they're the pin's own files with the SDK's patch applied.
         unpatch(src)
         run('git', '-C', src, 'checkout', '-q', '-f', '--detach', commit)
-    # --reset discards what a patch left in a dependency's files when the pin moved; at the same pin there's
-    # nothing to discard, and a patched file must keep its time.
-    reset = ['--reset'] if head != commit else []
-    run('gclient', 'sync', '--nohooks', '--no-history', '--force', *reset, '-r', f'src@{commit}', cwd=root)
+    sync = ('gclient', 'sync', '--nohooks', '--no-history')
+    if moving.exists():
+        # A move to another pin, in place, so that most files that didn't change keep their times and a build
+        # directory built from the old pin, restored with it, rebuilds little more than what changed: --reset
+        # discards what a patch left in a dependency's files, and -D deletes the git dependencies the new pin no
+        # longer has, which gclient would otherwise keep for good. Not --force at first: with -D, it deletes what
+        # git status lists after a reset, in src every dependency whose commit the move changes, which would all be
+        # cloned again with new times. But with --force gclient mends some dependencies it can't otherwise bring to
+        # the pin, such as one whose HEAD is damaged, cloning some of them again, so a move that fails is tried once
+        # more with it.
+        if run(*sync, '--reset', '-D', '-r', f'src@{commit}', cwd=root, check=False) != 0:
+            try:
+                summary('gclient couldn\'t move the checkout to the pin in place, so it tries again with `--force`, '
+                        'which may clone again dependencies it still has to move')
+            except OSError:
+                pass  # The summary is for people; the retry mustn't wait on it.
+            run(*sync, '--force', '--reset', '-D', '-r', f'src@{commit}', cwd=root)
+    else:
+        # At the same pin, for another .gclient, with no move unfinished.
+        run(*sync, '--force', '-r', f'src@{commit}', cwd=root)
     run('gclient', 'runhooks', cwd=root)
+    # Before the record, so a record never stands beside a marker: a rerun that finds neither syncs again, as
+    # for the same pin, which the move has finished.
+    moving.unlink(missing_ok=True)
     partial = record_path.with_name(record_path.name+'.partial')
     partial.write_text(json.dumps(wanted)+'\n')
     os.replace(partial, record_path)
