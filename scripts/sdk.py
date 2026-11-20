@@ -629,7 +629,7 @@ def step_sources(target, args):
         # Never in a cache, which holds only the build: the job downloads them each time.
         cache = Path(args.cache) if args.cache else Path(tempfile.gettempdir())/'libchromium-debian-cache'
         written.append(licences.sysroot_sources(checkout_root()/'src', linux, cache, output, args.version,
-                                                'debian-bullseye-sysroots'))
+                                                licences.SYSROOT_SOURCE))
         written.append(licences.sdk_source(output, args.version))
     for entry in written:
         summary(f'{entry["name"]}: {entry["size"]/1024**2:.0f} MiB')

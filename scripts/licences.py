@@ -27,6 +27,8 @@ TARGET = '//libchromium:libchromium'
 CHROMIUM_TARBALLS = 'https://commondatastorage.googleapis.com/chromium-browser-official'
 # Where this repository is published, which its releases and notices name.
 REPOSITORY = 'lanescape/libchromium'
+# The asset that holds the Debian source packages of every Linux target's sysroot.
+SYSROOT_SOURCE = 'debian-bullseye-sysroots'
 
 _DISCOVER = r'''
 import argparse, json, sys
@@ -108,6 +110,14 @@ def notices(src, out, destination, version):
             shutil.copy2(Path(src)/name, target/f'{number+1}-{slug(name)}')
         listed.append({'name': directory, 'license': entry['license'] or '', 'dir': directory, 'copyleft': False,
                        'credited_in': f'gaps/{slug(directory)}' if entry['files'] else None})
+    # Where each copyleft component's source is, and how many files it is, which its source asset must hold:
+    # publishing checks it.
+    for entry in listed:
+        if entry['copyleft']:
+            entry['source_dirs'] = source_dirs(src, entry['dir'])
+            listing = source_listing(src, entry['source_dirs'])
+            entry['source_files'] = sum(1 for _, kind, _, _ in listing if kind == 'file')
+            entry['source_listing'] = archive.listing_digest(listing)
     (destination/'components.json').write_text(json.dumps(listed, indent=2, sort_keys=True)+'\n')
     (destination/'README').write_text(notices_readme(json.loads((REPO/'chromium/pin.json').read_text()), version))
     return listed
@@ -162,6 +172,29 @@ def source_dirs(src, directory):
     return dirs
 
 
+def source_listing(src, dirs):
+    """What a component's source asset holds below each of its directories, as source_archives() copies them,
+    without what the build never reads and with links kept as links: (path under src, kind, size, link target)
+    for each entry, as archive.scan() reports an archive's members."""
+    entries = []
+
+    def entry(path):
+        relative = os.path.relpath(path, src).replace(os.sep, '/')
+        if os.path.islink(path):
+            return archive.Member(relative, 'symlink', 0, os.readlink(path))
+        if os.path.isdir(path):
+            return archive.Member(relative, 'dir')
+        if os.path.isfile(path):
+            return archive.Member(relative, 'file', os.path.getsize(path))
+        return archive.Member(relative, 'other')
+
+    for directory in dirs:
+        for root, names, files in os.walk(Path(src)/directory):
+            names[:] = [name for name in names if name not in UNBUILT]
+            entries += [entry(os.path.join(root, name)) for name in names + files if name not in UNBUILT]
+    return entries
+
+
 def slug(directory):
     return re.sub(r'[^a-z0-9.]+', '-', directory.lower()).strip('-')
 
@@ -192,15 +225,24 @@ def source_archives(src, out, output, version):
 
 def sysroot_packages(sysroot):
     """(source package, version) for every binary package in a Chromium sysroot."""
+    return packages_of([control.read_text(errors='replace')
+                        for control in sorted(Path(sysroot).glob('debian/*/DEBIAN/control'))], sysroot)
+
+
+def packages_of(controls, sysroot):
+    """(source package, version) for each binary package's control file of a sysroot."""
     found = set()
-    for control in sorted(Path(sysroot).glob('debian/*/DEBIAN/control')):
-        fields = parse_control(control.read_text(errors='replace'))
+    for text in controls:
+        fields = parse_control(text)
         version = fields['Version']
         source = fields.get('Source', fields['Package'])
         match = re.match(r'^(\S+)\s+\(([^)]+)\)$', source)
         if match:
             source, version = match.groups()
         found.add((source, version))
+    if not found:
+        # Its packages are what the asset must hold the source of, so none would make an empty one.
+        raise SystemExit(f'{sysroot} has no Debian packages to find the source of')
     return sorted(found)
 
 

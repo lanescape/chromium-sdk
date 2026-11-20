@@ -63,6 +63,14 @@ class Debian(unittest.TestCase):
                              'https://snapshot.debian.org/archive/debian/20250129T203412Z/')
 
 
+    def test_a_sysroot_without_packages_fails(self):
+        # Its source asset would hold nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp)/'debian').mkdir()
+            with self.assertRaises(SystemExit):
+                licences.sysroot_packages(tmp)
+
+
 class Copyleft(unittest.TestCase):
     def test_licences_that_ask_for_source(self):
         for name in ('LGPL-2.1', 'MPL-2.0', 'bsd-2-clause, lgpl-2.1, mit', 'BSD and LGPL v2 and LGPL v2.1',
