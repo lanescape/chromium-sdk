@@ -4,10 +4,11 @@
     version.py pr <number>    prints <Chromium tag>-pr<number>, a version that is never published
     version.py main           prints JSON: the version a push to main publishes, or why it publishes none
 
-A version is <Chromium tag>-<revision>, tagged v<version> when its release is published. Every commit on main gets
-the next revision of its pin: the highest revision tagged for that Chromium tag, plus one, or 1. Versions only
-move forward, so a commit publishes only if it is newer than every released commit: a strict descendant of every
-release tag. Tags must have been fetched (actions/checkout with fetch-tags and full history).
+A version is <Chromium tag>-<revision>, tagged v<version> when its release is published. Every commit CD runs for,
+a push's newest, gets the next revision of its pin: the highest revision tagged for that Chromium tag, plus one, or
+1. Versions only move forward, so a commit publishes only if it is newer than every released commit: a strict
+descendant of every release tag. Tags and the whole history must have been fetched; `main` refuses a shallow
+history, whose missing commits could make it skip a release it should publish.
 """
 import argparse
 import json
@@ -60,6 +61,8 @@ def latest(tags):
 
 
 def for_main(commit='HEAD'):
+    if git('rev-parse', '--is-shallow-repository').stdout.strip() != 'false':
+        raise SystemExit('the history is shallow: fetch all of it, with the tags, before deciding a version')
     commit = git('rev-parse', commit).stdout.strip()
     tags = release_tags()
     chromium = chromium_tag(commit)

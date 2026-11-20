@@ -93,6 +93,21 @@ class Versions(unittest.TestCase):
         self.git('tag', 'something')
         self.assertEqual(version.for_main()['version'], '157.0.8103.39-1')
 
+    def test_a_shallow_history_is_refused(self):
+        self.commit()
+        self.git('tag', 'v157.0.8103.39-1')
+        self.commit(message='second')
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        shallow = Path(elsewhere.name)/'shallow'
+        subprocess.run(['git', 'clone', '-q', '--depth', '1', f'file://{self.repo}', str(shallow)], check=True)
+        version.REPO = shallow
+        with self.assertRaises(SystemExit) as raised:
+            version.for_main()
+        self.assertIn('shallow', str(raised.exception))
+        subprocess.run(['git', '-C', str(shallow), 'fetch', '-q', '--tags', '--unshallow', 'origin'], check=True)
+        self.assertEqual(version.for_main()['version'], '157.0.8103.39-2')
+
     def test_pull_requests(self):
         self.commit()
         self.assertEqual(version.for_pr('12'), '157.0.8103.39-pr12')

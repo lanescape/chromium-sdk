@@ -4,8 +4,9 @@ name: CD
 # and published with its notices and corresponding source (specs/0003-ci-cd.md, CD). Each target is its own chain in
 # target.yml, build → embedder → test, which starts once startup.yml's checks pass and its Chromium checkout is
 # saved, and publishing needs every chain. One run at a time, each in its turn, in the order they began to wait, and
-# none cancelled, waiting or running, so versions are numbered in the order their commits reached main and every
-# commit gets its own.
+# none cancelled, waiting or running, so versions are numbered in the order their runs began to wait. A run releases
+# the commit it ran for, a push's newest, so a push of several commits releases the last, which holds them all, and a
+# run whose commit a newer release already holds publishes nothing.
 
 on:
   push:
@@ -34,7 +35,15 @@ jobs:
     steps:
       - uses: lanescape/runners/actions/checkout@v1
       - name: Fetch release tags and history
-        run: git fetch --quiet --tags --unshallow origin 2>/dev/null || git fetch --quiet --tags origin
+        # The whole history, which the version's ancestry checks need: if it can't be fetched, the job fails rather
+        # than carry on with part of it.
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --quiet --tags --unshallow origin
+          else
+            git fetch --quiet --tags origin
+          fi
       - id: version
         run: python3 scripts/version.py main | python3 scripts/cd_summary.py
 
@@ -96,7 +105,15 @@ jobs:
     steps:
       - uses: lanescape/runners/actions/checkout@v1
       - name: Fetch release tags and history
-        run: git fetch --quiet --tags --unshallow origin 2>/dev/null || git fetch --quiet --tags origin
+        # The whole history, which the version's ancestry checks need: if it can't be fetched, the job fails rather
+        # than carry on with part of it.
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --quiet --tags --unshallow origin
+          else
+            git fetch --quiet --tags origin
+          fi
       - name: Check this is still the next version
         env:
           VERSION: ${{ needs.version.outputs.version }}
