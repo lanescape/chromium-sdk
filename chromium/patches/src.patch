@@ -1322,6 +1322,45 @@ index 808b1255f59..953220e98b8 100644
  
  #if defined(WIN32)
  
+diff --git a/mojo/public/tools/bindings/mojom.gni b/mojo/public/tools/bindings/mojom.gni
+index e5934d85804..83db1dad035 100644
+--- a/mojo/public/tools/bindings/mojom.gni
++++ b/mojo/public/tools/bindings/mojom.gni
+@@ -1031,11 +1031,23 @@ template("mojom") {
+ 
+   shared_cpp_sources_target_name = "${target_name}_shared_cpp_sources"
+ 
++  if (libchromium_exports) {
++    # Exported from the shared library the SDK links, so that an embedder's
++    # own mojoms can import this one (libchromium).
++    config("${target_name}__libchromium_exports") {
++      cflags = [ "-fvisibility=default" ]
++    }
++    _libchromium_exports_config = ":${target_name}__libchromium_exports"
++  }
++
+   source_set(shared_cpp_sources_target_name) {
+     if (defined(invoker.testonly)) {
+       testonly = invoker.testonly
+     }
+     configs += [ "//build/config/compiler:wexit_time_destructors" ]
++    if (libchromium_exports) {
++      configs += [ _libchromium_exports_config ]
++    }
+     deps = []
+     public_deps = []
+     if (output_file_base_paths != []) {
+@@ -1629,6 +1641,10 @@ template("mojom") {
+         defines = export_defines
+         configs += [ "//build/config/compiler:wexit_time_destructors" ]
+         configs += extra_configs
++        if (libchromium_exports && !(defined(bindings_configuration.for_blink) &&
++                                    bindings_configuration.for_blink)) {
++          configs += [ _libchromium_exports_config ]
++        }
+         if (output_file_base_paths != []) {
+           sources = []
+           foreach(base_path, output_file_base_paths) {
 diff --git a/net/base/net_export.h b/net/base/net_export.h
 index ca64828ac97..fb54c5b83bf 100644
 --- a/net/base/net_export.h

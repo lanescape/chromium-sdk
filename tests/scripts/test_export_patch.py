@@ -71,6 +71,8 @@ class RewriteHeader(unittest.TestCase):
         self.assertEqual(export_patch.owner('v8x/foo.h', repos), '')
 
 
+# The mojom template, whose edits each add only blocks the SDK's switch guards.
+MOJOM = 'mojo/public/tools/bindings/mojom.gni'
 # The one file the patches change for a reason other than the SDK's switch.
 TOC_FIX = 'build/toolchain/apple/linker_driver.py'
 
@@ -89,10 +91,19 @@ class CarriedPatches(unittest.TestCase):
 
     def test_patches_only_add_the_sdk_switch(self):
         """Every line the carried patches add mentions the SDK's switch, or is a comment or GN syntax around it,
-        or is in the linker driver's TOC fix, the one change that isn't the switch's."""
+        or is in the linker driver's TOC fix, the one change that isn't the switch's, or in the mojom template's
+        edits, each of which is a branch on the switch."""
         fix = {line for path, old, new in export_patch.EDITS if path == TOC_FIX
                for line in set(new.splitlines()) - set(old.splitlines())}
         self.assertTrue(fix)
+        mojom_edits = [(old, new) for path, old, new in export_patch.EDITS if path == MOJOM]
+        self.assertTrue(mojom_edits)
+        for old, new in mojom_edits:
+            # Each keeps the template's own text and adds only blocks that the switch guards.
+            self.assertIn(old, new)
+            added = new.replace(old, '', 1)
+            self.assertIn(f'if ({export_patch.ARG}', added)
+        mojom = {line for _, new in mojom_edits for line in new.splitlines()}
         for patch in sorted((REPO/'chromium/patches').glob('**/*.patch')):
             path = None
             for line in patch.read_text().splitlines():
@@ -102,6 +113,9 @@ class CarriedPatches(unittest.TestCase):
                     continue
                 if path == TOC_FIX:
                     self.assertIn(line[1:], fix, f'{patch.name}: {line}')
+                    continue
+                if path == MOJOM:
+                    self.assertIn(line[1:], mojom, f'{patch.name}: {line}')
                     continue
                 body = line[1:].strip()
                 if not body or body.startswith(('#', '//')) and 'COMPONENT_BUILD' not in body:

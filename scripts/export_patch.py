@@ -24,6 +24,9 @@ exports between its components, and turns off what can't hold across that bounda
   and FFmpeg are shared libraries here too, and the build runs executables of its own, such as protoc.
 - A macOS build without V8's context snapshot generates: Chrome's own bundle, which the SDK never builds, lists
   V8's snapshot without depending on what makes it.
+- Every mojom target's C++, its generated code and the traits sources it compiles itself, but for Blink's
+  variant, is exported, which a component build compiles hidden into each component that uses it, so that an
+  embedder's own mojoms can import Chromium's. Traits a separate target compiles stay hidden.
 - Whole-program vtable optimisation stays off: it assumes the link sees every class that implements an
   interface without exported visibility, and an embedder implements Content's delegates outside the library.
 
@@ -148,6 +151,45 @@ EDITS = (
      '  if (defined(is_component_build) && is_component_build) {\n    perfetto_component_build = true\n',
      '  if ((defined(is_component_build) && is_component_build) ||\n'
      f'      (defined({ARG}) && {ARG})) {{\n    perfetto_component_build = true\n'),
+    # A mojom target compiles its generated C++ and the traits sources it names hidden, unless it names an
+    # export macro, and a component build then compiles them into each component that uses them. The library
+    # links each once, so with the argument it exports them, as default visibility, leaving inline functions
+    # hidden as Chromium does: an embedder's own mojom that imports one, such as gfx.mojom.Rect, then links.
+    # Blink's variant stays as it is, and so do traits a separate target compiles (specs/0001-sdk.md, Mojom).
+    ('mojo/public/tools/bindings/mojom.gni',
+     '  source_set(shared_cpp_sources_target_name) {\n'
+     '    if (defined(invoker.testonly)) {\n'
+     '      testonly = invoker.testonly\n'
+     '    }\n'
+     '    configs += [ "//build/config/compiler:wexit_time_destructors" ]\n',
+     f'  if ({ARG}) {{\n'
+     '    # Exported from the shared library the SDK links, so that an embedder\'s\n'
+     '    # own mojoms can import this one (libchromium).\n'
+     '    config("${target_name}__libchromium_exports") {\n'
+     '      cflags = [ "-fvisibility=default" ]\n'
+     '    }\n'
+     '    _libchromium_exports_config = ":${target_name}__libchromium_exports"\n'
+     '  }\n'
+     '\n'
+     '  source_set(shared_cpp_sources_target_name) {\n'
+     '    if (defined(invoker.testonly)) {\n'
+     '      testonly = invoker.testonly\n'
+     '    }\n'
+     '    configs += [ "//build/config/compiler:wexit_time_destructors" ]\n'
+     f'    if ({ARG}) {{\n'
+     '      configs += [ _libchromium_exports_config ]\n'
+     '    }\n'),
+    ('mojo/public/tools/bindings/mojom.gni',
+     '        defines = export_defines\n'
+     '        configs += [ "//build/config/compiler:wexit_time_destructors" ]\n'
+     '        configs += extra_configs\n',
+     '        defines = export_defines\n'
+     '        configs += [ "//build/config/compiler:wexit_time_destructors" ]\n'
+     '        configs += extra_configs\n'
+     f'        if ({ARG} && !(defined(bindings_configuration.for_blink) &&\n'
+     '                                    bindings_configuration.for_blink)) {\n'
+     '          configs += [ _libchromium_exports_config ]\n'
+     '        }\n'),
     # Not part of the argument: macOS's linker driver writes a shared library's .TOC by appending to bytes, which
     # copies the whole TOC each time. For a library exporting 310,000 symbols that takes minutes on one core, long
     # after the link itself has finished. A list joined once writes the same TOC. Reported upstream as
