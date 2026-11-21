@@ -1,0 +1,120 @@
+name: Startup
+
+# What every target's chain starts from (specs/0003-ci-cd.md, CI): the checks that need no Chromium, and the Chromium
+# checkout that every target's build restores. Called by ci.yml and cd.yml, whose chains need both. A fork's pull
+# request runs only the checks, on GitHub's runners, since the runner service makes no machines for forks.
+
+on:
+  workflow_call:
+    inputs:
+      checkout:
+        description: false to skip the Chromium checkout job, for a CD run that publishes nothing
+        type: boolean
+        default: true
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'lanescape-2vcpu-linux-amd64' || 'ubuntu-26.04' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/runners/actions/checkout@v1
+      - name: Script tests
+        run: python3 -m unittest discover --start-directory tests/scripts --top-level-directory . --verbose
+      - name: Repository checks
+        run: python3 scripts/check.py
+      - name: Workflow lint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  # The one job that saves the checkout, once for each key, for every target's build (specs/0003-ci-cd.md, Caches).
+  # It does nothing if the checkout for this commit's key is saved already.
+  checkout:
+    name: Chromium checkout
+    if: inputs.checkout && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: lanescape-16vcpu-linux-amd64
+    permissions:
+      contents: read
+    steps:
+      - uses: lanescape/runners/actions/checkout@v1
+      # Whether the checkout is saved for this key, without downloading it: the runner service records no choice for
+      # a check, so the run's first restore of the checkout still chooses.
+      - id: saved
+        uses: lanescape/runners/actions/cache@v1
+        with:
+          name: chromium-checkout
+          check-only: true
+      - id: needed
+        name: Decide whether to make the checkout
+        env:
+          RESTORED: ${{ steps.saved.outputs.restored }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RESTORED" =~ ^[a-z_]+$ ]]; then
+            echo "::error::The cache action didn't say where a restore of the checkout would come from"
+            exit 1
+          fi
+          if [[ "$RESTORED" == *_exact ]]; then
+            echo "- The checkout for this commit's key is saved ($RESTORED), so there's nothing to make" \
+              >>"$GITHUB_STEP_SUMMARY"
+            echo "make=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "- The checkout for this commit's key isn't saved (a restore would come from $RESTORED)," \
+              "so this job makes it" >>"$GITHUB_STEP_SUMMARY"
+            echo "make=true" >>"$GITHUB_OUTPUT"
+          fi
+      - if: steps.needed.outputs.make == 'true'
+        uses: lanescape/runners/actions/disk@v1
+        with:
+          size-gb: 150
+          iops: 10000
+          throughput-mibps: 2400
+      # For the rerun of a job lost to a preemption or the age limit, its resume image, which holds the lost job's work
+      # once /work/.libchromium-restored is written. Without it, anything there is a restore cut short, which the
+      # restore below mustn't mix with another version of the checkout.
+      - id: work
+        if: steps.needed.outputs.make == 'true'
+        name: Find what the work disk holds
+        run: |
+          set -euo pipefail
+          if [ -f /work/.libchromium-restored ]; then
+            echo "resumed=true" >>"$GITHUB_OUTPUT"
+          else
+            find /work -mindepth 1 -maxdepth 1 ! -name lost+found -exec rm -rf {} +
+            echo "resumed=false" >>"$GITHUB_OUTPUT"
+          fi
+      # Made from the newest checkout there is, which a sync and the patches bring up to date, leaving unchanged files
+      # their times, so that build directories built from it rebuild only what changed. This fixes the run's choice of
+      # the checkout to that older version, which the builds then restore and bring up to date the same way.
+      - if: steps.needed.outputs.make == 'true' && steps.work.outputs.resumed != 'true'
+        uses: lanescape/runners/actions/cache@v1
+        with:
+          name: chromium-checkout
+          path: /work
+      - if: steps.needed.outputs.make == 'true'
+        name: Check out and patch Chromium
+        env:
+          LIBCHROMIUM_CHECKOUT: /work/chromium
+          DEPOT_TOOLS: /work/depot_tools
+        run: |
+          set -euo pipefail
+          # Written first, so that a rerun on this job's resume image carries on from its work, never restoring again.
+          touch /work/.libchromium-restored
+          # The same for every target: one .gclient brings every target's dependencies, and the patches are shared.
+          python3 scripts/sdk.py checkout linux-amd64
+          python3 scripts/sdk.py patch linux-amd64
+      # Kept only if the job succeeds.
+      - if: steps.needed.outputs.make == 'true'
+        uses: lanescape/runners/actions/save-cache@v1
+        with:
+          name: chromium-checkout
+          path: /work
+          exclude: |
+            lost+found
+            .libchromium-restored

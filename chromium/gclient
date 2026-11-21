@@ -1,0 +1,10 @@
+# The checkout's .gclient (specs/0002-build.md, Checkout). One checkout serves every target: Linux machines
+# build all three, so it brings macOS's and arm64's dependencies too. PGO profiles come only with a sync.
+solutions = [{
+  "name": "src",
+  "url": "https://chromium.googlesource.com/chromium/src.git",
+  "managed": False,
+  "custom_vars": {"checkout_pgo_profiles": True},
+}]
+target_os = ["linux", "mac"]
+target_cpu = ["x64", "arm64"]

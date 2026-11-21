@@ -1,0 +1,67 @@
+{
+  "_": "Directories whose licence Chromium's metadata can't state, at this pin, among what the SDK links or ships (specs/0004-licences.md, Notices). Each names its licence and the files whose texts the notices carry instead. Packaging fails on any gap not listed here, and a copyleft licence here would also need its source published, which nothing listed needs.",
+  "third_party/catapult": {
+    "license": "BSD-3-Clause",
+    "files": [
+      "third_party/catapult/LICENSE"
+    ],
+    "why": "No README.chromium at its root."
+  },
+  "third_party/crashpad/crashpad/third_party/lss": {
+    "license": "BSD-3-Clause",
+    "files": [
+      "third_party/lss/LICENSE"
+    ],
+    "why": "Crashpad's pointer to Chromium's own copy of linux-syscall-support, whose licence file it names by a path that isn't in this checkout."
+  },
+  "third_party/crashpad/crashpad/third_party/zlib": {
+    "license": "Zlib",
+    "files": [
+      "third_party/zlib/LICENSE"
+    ],
+    "why": "Crashpad's pointer to Chromium's own copy of zlib, with no licence file of its own."
+  },
+  "third_party/perfetto/protos/third_party/android": {
+    "license": "Apache-2.0",
+    "files": [
+      "third_party/perfetto/LICENSE"
+    ],
+    "why": "Perfetto's protocol definitions of Android's trace formats, part of Perfetto, under its licence."
+  },
+  "third_party/perfetto/protos/third_party/chromium": {
+    "license": "Apache-2.0",
+    "files": [
+      "third_party/perfetto/LICENSE"
+    ],
+    "why": "Perfetto's protocol definitions of Chromium's trace formats, part of Perfetto, under its licence."
+  },
+  "third_party/rust": {
+    "license": null,
+    "files": [],
+    "why": "The directory of Chromium's Rust crates, which holds no code of its own: each crate has its own metadata and credit."
+  },
+  "third_party/rust-toolchain/lib/third_party/crubit": {
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "files": [
+      "third_party/rust-toolchain/lib/third_party/crubit/LICENSE"
+    ],
+    "why": "Crubit's support library, which comes with Chromium's Rust toolchain, with no README.chromium."
+  },
+  "third_party/swiftshader/third_party/llvm-10.0": {
+    "license": "Apache-2.0 WITH LLVM-exception AND NCSA AND BSD-3-Clause",
+    "files": [
+      "third_party/libc++/src/LICENSE.TXT",
+      "third_party/swiftshader/third_party/llvm-subzero/LICENSE.TXT",
+      "third_party/swiftshader/third_party/llvm-10.0/llvm/include/llvm/Support/LICENSE.TXT",
+      "third_party/swiftshader/third_party/llvm-10.0/llvm/lib/Support/COPYRIGHT.regex"
+    ],
+    "why": "SwiftShader's copy of LLVM 10, linked on macOS, with no README.chromium or licence file of its own; LLVM 10 is under the Apache License 2.0 with LLVM Exceptions, which libc++'s licence text is, and its legacy University of Illinois/NCSA licence, which SwiftShader's older copy of LLVM carries; and the copy's own notices, for its system interface library and its OpenBSD-derived regular expressions."
+  },
+  "third_party/swiftshader/third_party/marl": {
+    "license": "Apache-2.0",
+    "files": [
+      "third_party/swiftshader/third_party/marl/LICENSE"
+    ],
+    "why": "SwiftShader's copy of Marl, with no README.chromium."
+  }
+}

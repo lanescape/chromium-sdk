@@ -1,0 +1,119 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from tests.scripts.common import REPO  # noqa: F401
+import licences
+
+DSC = """Format: 3.0 (quilt)
+Source: glibc
+Version: 2.31-13+deb11u6
+Checksums-Sha256:
+ aaaa 100 glibc_2.31.orig.tar.xz
+ bbbb 20 glibc_2.31-13+deb11u6.debian.tar.xz
+Files:
+ cccc 100 glibc_2.31.orig.tar.xz
+"""
+
+
+class Readme(unittest.TestCase):
+    def test_points_to_chromium_s_source_and_the_patch(self):
+        text = licences.notices_readme({'tag': '157.0.8103.39', 'commit': '9'*40}, '157.0.8103.39-2')
+        tarball = 'https://commondatastorage.googleapis.com/chromium-browser-official/chromium-157.0.8103.39.tar.xz'
+        for expected in (tarball+'\n', tarball+'.hashes', '9'*40, 'source-libchromium',
+                         'https://github.com/lanescape/libchromium/tree/v157.0.8103.39-2/chromium/patches'):
+            self.assertIn(expected, text)
+        self.assertNotIn('chromium-sdk', text)
+
+
+class Debian(unittest.TestCase):
+    def test_checksums(self):
+        self.assertEqual(licences.checksums(DSC), [('glibc_2.31.orig.tar.xz', 'aaaa'),
+                                                   ('glibc_2.31-13+deb11u6.debian.tar.xz', 'bbbb')])
+
+    def test_a_dsc_must_be_whole(self):
+        signed = DSC + '\n-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----\n'
+        self.assertTrue(licences.complete_dsc(signed))
+        self.assertFalse(licences.complete_dsc(DSC))
+        self.assertFalse(licences.complete_dsc(signed[:len(signed)//2]))
+
+    def test_pool_path(self):
+        self.assertEqual(licences.pool_path('glibc', '2.31-13+deb11u6'),
+                         'pool/main/g/glibc/glibc_2.31-13+deb11u6.dsc')
+        self.assertEqual(licences.pool_path('libx11', '2:1.7.2-1'), 'pool/main/libx/libx11/libx11_1.7.2-1.dsc')
+
+    def test_sysroot_packages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for package, control in (
+                    ('libc6', 'Package: libc6\nSource: glibc\nVersion: 2.31-13+deb11u6\n'),
+                    ('libc6-dev', 'Package: libc6-dev\nSource: glibc\nVersion: 2.31-13+deb11u6\n'),
+                    ('zlib1g', 'Package: zlib1g\nSource: zlib (1:1.2.11.dfsg-2+deb11u2)\nVersion: 1:1.2.11.dfsg-2+deb11u2+b1\n'),
+                    ('libacl1', 'Package: libacl1\nVersion: 2.2.53-10\n')):
+                (tmp/'debian'/package/'DEBIAN').mkdir(parents=True)
+                (tmp/'debian'/package/'DEBIAN/control').write_text(control)
+            self.assertEqual(licences.sysroot_packages(tmp), [('glibc', '2.31-13+deb11u6'), ('libacl1', '2.2.53-10'),
+                                                              ('zlib', '1:1.2.11.dfsg-2+deb11u2')])
+
+    def test_snapshot_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp)/'bullseye.amd64'
+            listing.write_text('https://snapshot.debian.org/archive/debian/20250129T203412Z/pool/main/a/acl/x.deb\n')
+            self.assertEqual(licences.snapshot_base(listing),
+                             'https://snapshot.debian.org/archive/debian/20250129T203412Z/')
+
+
+    def test_a_sysroot_without_packages_fails(self):
+        # Its source asset would hold nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp)/'debian').mkdir()
+            with self.assertRaises(SystemExit):
+                licences.sysroot_packages(tmp)
+
+
+class Copyleft(unittest.TestCase):
+    def test_licences_that_ask_for_source(self):
+        for name in ('LGPL-2.1', 'MPL-2.0', 'bsd-2-clause, lgpl-2.1, mit', 'BSD and LGPL v2 and LGPL v2.1',
+                     'GPL-2.0', 'EPL-1.0'):
+            self.assertTrue(licences.COPYLEFT.search(name), name)
+        for name in ('BSD-3-Clause', 'Apache-2.0', 'MIT', 'ISC', 'Zlib', 'FFT2D', 'Apache-2.0 WITH LLVM-exception'):
+            self.assertFalse(licences.COPYLEFT.search(name), name)
+
+    def test_rust_crates_include_their_vendored_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            meta = tmp/'third_party/rust/symphonia_core/v0_6'
+            meta.mkdir(parents=True)
+            (meta/'BUILD.gn').write_text('sources = [ "//third_party/rust/chromium_crates_io/vendor/'
+                                         'symphonia-core-v0_6/src/lib.rs" ]\n')
+            (tmp/'third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6/src').mkdir(parents=True)
+            self.assertEqual(licences.source_dirs(tmp, 'third_party/rust/symphonia_core/v0_6'),
+                             ['third_party/rust/symphonia_core/v0_6',
+                              'third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6'])
+            self.assertEqual(licences.source_dirs(tmp, 'third_party/ffmpeg'), ['third_party/ffmpeg'])
+
+    def test_only_reviewed_gaps_pass(self):
+        diagnostics = ('Error: missing third party metadata file or licenses.py SPECIAL_CASES entry in '
+                       'third_party/rust\n\nErrors in third_party/crashpad/crashpad/third_party/lss/README.crashpad:\n'
+                       ' License file not found\n')
+        known = licences.gaps()
+        self.assertEqual(licences.unexplained(diagnostics, known), [])
+        self.assertEqual(licences.unexplained(diagnostics.replace('third_party/rust', 'third_party/new'), known),
+                         ['third_party/new'])
+        self.assertEqual(licences.unexplained('Error: something else\n', known), ['Error: something else'])
+        duplicate = "Invalid metadata file: duplicate 'Name' in third_party/x/README.chromium\n"
+        self.assertEqual(licences.unexplained(duplicate, known), [duplicate.strip()])
+
+    def test_reviewed_gaps_are_permissive(self):
+        for directory, entry in licences.gaps().items():
+            self.assertFalse(licences.COPYLEFT.search(entry['license'] or ''), directory)
+            self.assertTrue(entry['why'], directory)
+
+    def test_slug(self):
+        self.assertEqual(licences.slug('third_party/ffmpeg'), 'third-party-ffmpeg')
+        self.assertEqual(licences.slug('third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_6'),
+                         'third-party-rust-chromium-crates-io-vendor-symphonia-core-v0-6')
+
+
+if __name__ == '__main__':
+    unittest.main()

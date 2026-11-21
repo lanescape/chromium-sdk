@@ -1,0 +1,58 @@
+{
+  "caches": {
+    "chromium-checkout": {
+      "from": [
+        "chromium/gclient",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "chromium/pin.json"
+      ]
+    },
+    "chromium-out-linux-amd64": {
+      "from": [
+        "chromium/args.gn",
+        "chromium/gclient",
+        "chromium/gn/BUILD.gn",
+        "chromium/gn/embedder_probe.cc",
+        "chromium/gn/embedder_probe_mac.mm",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "chromium/pin.json",
+        "scripts/sdk.py",
+        "targets.json"
+      ]
+    },
+    "chromium-out-linux-arm64": {
+      "from": [
+        "chromium/args.gn",
+        "chromium/gclient",
+        "chromium/gn/BUILD.gn",
+        "chromium/gn/embedder_probe.cc",
+        "chromium/gn/embedder_probe_mac.mm",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "chromium/pin.json",
+        "scripts/sdk.py",
+        "targets.json"
+      ]
+    },
+    "chromium-out-macos-arm64": {
+      "from": [
+        "chromium/args.gn",
+        "chromium/gclient",
+        "chromium/gn/BUILD.gn",
+        "chromium/gn/embedder_probe.cc",
+        "chromium/gn/embedder_probe_mac.mm",
+        "chromium/patches/src.patch",
+        "chromium/patches/third_party/perfetto.patch",
+        "chromium/patches/v8.patch",
+        "chromium/pin.json",
+        "scripts/sdk.py",
+        "targets.json"
+      ]
+    }
+  }
+}

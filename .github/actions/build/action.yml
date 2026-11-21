@@ -1,0 +1,95 @@
+name: Build an SDK target
+description: >-
+  Builds one target's SDK on a runner-service machine whose work disk, mounted at /work, holds the Chromium build,
+  packages it, and hands the package to the embedder's build as an artifact (specs/0003-ci-cd.md). The job asks for
+  the disk, checks out this repository and restores the checkout's and the build directory's caches first, for macOS
+  fetches the Apple SDK, and saves the caches last.
+inputs:
+  target:
+    description: linux-amd64, linux-arm64 or macos-arm64 (targets.json)
+    required: true
+  version:
+    description: The version the packages carry
+    required: true
+  release:
+    description: "'true' for a release's whole package and its source; 'false' for a pull request's quick one"
+    required: false
+    default: 'false'
+  apple-sdk-archive:
+    description: macOS only, the Apple SDK archive that .github/actions/apple-sdk fetched and checked
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Check out and patch Chromium
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        LIBCHROMIUM_CHECKOUT: /work/chromium
+        DEPOT_TOOLS: /work/depot_tools
+        APPLE_SDK_ARCHIVE: ${{ inputs.apple-sdk-archive }}
+      run: |
+        set -euo pipefail
+        for step in checkout packages mac-sdk patch configure; do
+          if [ "$step" = mac-sdk ] && [ "$TARGET" = macos-arm64 ]; then
+            if [ -z "$APPLE_SDK_ARCHIVE" ]; then
+              echo "::error::Building macos-arm64 needs the Apple SDK archive that .github/actions/apple-sdk fetched"
+              exit 1
+            fi
+            # The copy the apple-sdk action checked.
+            python3 scripts/sdk.py mac-sdk "$TARGET" --archive "$APPLE_SDK_ARCHIVE"
+          else
+            python3 scripts/sdk.py "$step" "$TARGET"
+          fi
+        done
+    - name: Build
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        LIBCHROMIUM_CHECKOUT: /work/chromium
+        DEPOT_TOOLS: /work/depot_tools
+      run: python3 scripts/sdk.py build "$TARGET"
+    - name: Package
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+        VERSION: ${{ inputs.version }}
+        RELEASE: ${{ inputs.release }}
+        LIBCHROMIUM_CHECKOUT: /work/chromium
+        DEPOT_TOOLS: /work/depot_tools
+      run: |
+        set -euo pipefail
+        assets="$RUNNER_TEMP/assets-$TARGET"
+        rm -rf "$assets"
+        # A pull request's package goes only to its tests: quicker to compress, and with no symbols. A release's is
+        # whole; package refuses a quick one for any version but a pull request's, and publish.py refuses it too.
+        quick=()
+        if [ "$RELEASE" = false ]; then
+          quick=(--quick)
+        fi
+        python3 scripts/sdk.py package "$TARGET" --version "$VERSION" --output "$assets" "${quick[@]}"
+        if [ "$RELEASE" = true ]; then
+          # One Linux job also makes the sysroots' Debian sources and this repository's.
+          sysroots=()
+          [ "$TARGET" = linux-amd64 ] && sysroots=(--sysroots)
+          python3 scripts/sdk.py sources "$TARGET" --version "$VERSION" --output "$assets" \
+            --cache "$RUNNER_TEMP/debian-cache" "${sysroots[@]}"
+        fi
+    - name: Hand the package on
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: sdk-${{ inputs.target }}
+        path: ${{ runner.temp }}/assets-${{ inputs.target }}
+        retention-days: 1
+        compression-level: 0
+        if-no-files-found: error
+    # Siso's whole record of why it ran what it ran, which the build's summary counts (specs/0003-ci-cd.md, CI).
+    # Last, once the package is handed on; a failed upload still fails the job, before it saves its caches.
+    - name: Keep Siso's explanation
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: siso-explain-${{ inputs.target }}
+        path: ${{ runner.temp }}/siso-explain-${{ inputs.target }}/siso_explain-${{ inputs.target }}.txt
+        retention-days: 1
+        if-no-files-found: ignore

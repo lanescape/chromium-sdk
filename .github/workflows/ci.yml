@@ -1,0 +1,58 @@
+name: CI
+
+# Pull requests build every target on the runner service's Linux amd64 machines and test each on a machine like
+# the target's (specs/0003-ci-cd.md, CI). Each target is its own chain in target.yml, build → embedder → test, and
+# starts only once startup.yml's checks pass and its Chromium checkout is saved. A fork's pull request runs only the
+# checks. A new push cancels the run in progress.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  startup:
+    uses: ./.github/workflows/startup.yml
+    permissions:
+      contents: read
+
+  # Each call's job grants its chain's token: `id-token: write` only for macOS, to fetch the Apple SDK.
+  linux-amd64:
+    name: linux-amd64
+    needs: startup
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/target.yml
+    permissions:
+      contents: read
+    with:
+      target: linux-amd64
+
+  linux-arm64:
+    name: linux-arm64
+    needs: startup
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/target.yml
+    permissions:
+      contents: read
+    with:
+      target: linux-arm64
+
+  macos-arm64:
+    name: macos-arm64
+    needs: startup
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/target.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      target: macos-arm64
