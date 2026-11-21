@@ -428,6 +428,37 @@ index 5d1fa02a1c1..2ccaacde6a5 100644
  #if defined(WIN32)
  
  #if defined(COMPONENTS_DRIVE_IMPLEMENTATION)
+diff --git a/components/embedder_support/BUILD.gn b/components/embedder_support/BUILD.gn
+index 4fcfc8913e4..bf9ad41a194 100644
+--- a/components/embedder_support/BUILD.gn
++++ b/components/embedder_support/BUILD.gn
+@@ -49,11 +49,25 @@ static_library("permissions") {
+   }
+ }
+ 
+-static_library("user_agent") {
++if (libchromium_exports) {
++  # Exported, every object of it, from the shared library the SDK links,
++  # whose export list names it (libchromium).
++  config("user_agent_libchromium_exports") {
++    cflags = [ "-fvisibility=default" ]
++  }
++  _user_agent_type = "source_set"
++} else {
++  _user_agent_type = "static_library"
++}
++
++target(_user_agent_type, "user_agent") {
+   sources = [
+     "user_agent_utils.cc",
+     "user_agent_utils.h",
+   ]
++  if (libchromium_exports) {
++    configs += [ ":user_agent_libchromium_exports" ]
++  }
+ 
+   deps = [
+     ":embedder_support",
 diff --git a/components/gcm_driver/common/gcm_driver_export.h b/components/gcm_driver/common/gcm_driver_export.h
 index 9c767a3bdf5..d2375672b7d 100644
 --- a/components/gcm_driver/common/gcm_driver_export.h

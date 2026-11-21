@@ -27,6 +27,8 @@ exports between its components, and turns off what can't hold across that bounda
 - Every mojom target's C++, its generated code and the traits sources it compiles itself, but for Blink's
   variant, is exported, which a component build compiles hidden into each component that uses it, so that an
   embedder's own mojoms can import Chromium's. Traits a separate target compiles stay hidden.
+- //components/embedder_support:user_agent, which the library's export list names but which has no export
+  macros, is a source set compiled with default visibility, so Chrome's user agent functions are exported.
 - Whole-program vtable optimisation stays off: it assumes the link sees every class that implements an
   interface without exported visibility, and an embedder implements Content's delegates outside the library.
 
@@ -190,6 +192,35 @@ EDITS = (
      '                                    bindings_configuration.for_blink)) {\n'
      '          configs += [ _libchromium_exports_config ]\n'
      '        }\n'),
+    # The library's export list names //components/embedder_support:user_agent, Chrome's user agent and its
+    # client-hint brands, for embedders, but the target is a static library with no export macros: the link would
+    # take only what the library itself calls, hidden. With the argument it's a source set, every object linked,
+    # compiled with default visibility, as the mojom targets are.
+    ('components/embedder_support/BUILD.gn',
+     'static_library("user_agent") {\n'
+     '  sources = [\n'
+     '    "user_agent_utils.cc",\n'
+     '    "user_agent_utils.h",\n'
+     '  ]\n',
+     f'if ({ARG}) {{\n'
+     '  # Exported, every object of it, from the shared library the SDK links,\n'
+     '  # whose export list names it (libchromium).\n'
+     '  config("user_agent_libchromium_exports") {\n'
+     '    cflags = [ "-fvisibility=default" ]\n'
+     '  }\n'
+     '  _user_agent_type = "source_set"\n'
+     '} else {\n'
+     '  _user_agent_type = "static_library"\n'
+     '}\n'
+     '\n'
+     'target(_user_agent_type, "user_agent") {\n'
+     '  sources = [\n'
+     '    "user_agent_utils.cc",\n'
+     '    "user_agent_utils.h",\n'
+     '  ]\n'
+     f'  if ({ARG}) {{\n'
+     '    configs += [ ":user_agent_libchromium_exports" ]\n'
+     '  }\n'),
     # Not part of the argument: macOS's linker driver writes a shared library's .TOC by appending to bytes, which
     # copies the whole TOC each time. For a library exporting 310,000 symbols that takes minutes on one core, long
     # after the link itself has finished. A list joined once writes the same TOC. Reported upstream as
