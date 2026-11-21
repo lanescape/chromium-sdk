@@ -236,6 +236,18 @@ def step_packages(target, args):
 
 # mac-sdk
 
+def sdk_marker(destination):
+    """Beside the SDK, so that writing it changes none of the SDK's times: which SDK is installed there, once it's
+    installed whole."""
+    return destination.with_name(f'.{destination.name}.libchromium-apple-sdk')
+
+
+def installed_sdk(destination):
+    """The SHA-256 of the SDK archive installed whole at destination, or None."""
+    marker = sdk_marker(destination)
+    return marker.read_text() if marker.is_file() and (destination/'Contents').is_dir() else None
+
+
 def step_mac_sdk(target, args):
     """Installs the pinned Apple SDK where Chromium looks for a hermetic Xcode. It comes from the organization's
     private bucket for CI tools, or a local copy of it (--archive), and is never published or packaged
@@ -246,8 +258,8 @@ def step_mac_sdk(target, args):
         return
     # Where Chromium looks for a hermetic Xcode, or for an embedder's build, wherever it's asked.
     destination = Path(args.destination) if args.destination else checkout_root()/'src'/HERMETIC_XCODE
-    marker = destination/apple_sdk_marker().name
-    if marker.is_file() and marker.read_text() == entry['sha256']:
+    marker = sdk_marker(destination)
+    if installed_sdk(destination) == entry['sha256']:
         print('mac-sdk: the pinned SDK is in place', flush=True)
         return
     with tempfile.TemporaryDirectory() as tmp:
@@ -260,16 +272,51 @@ def step_mac_sdk(target, args):
             run('gcloud', 'storage', 'cp', entry['object'], archive)
         if sha256(archive) != entry['sha256']:
             raise SystemExit('the Apple SDK archive does not match its pin in targets.json')
+        # The marker goes first and comes back last, so a stop part-way through never leaves it on an SDK that isn't
+        # whole.
+        marker.unlink(missing_ok=True)
         if destination.is_symlink() or destination.is_file():
             destination.unlink()
         shutil.rmtree(destination, ignore_errors=True)
-        (destination/'Contents').mkdir(parents=True)
+        contents = destination/'Contents'
+        contents.mkdir(parents=True)
+        links, directories, newest = [], set(), None
+
+        def members(stream):
+            nonlocal newest
+            for member in stream:
+                newest = member.mtime if newest is None else max(newest, member.mtime)
+                # Its name as extracted.
+                extracted = tarfile.data_filter(member, str(contents))
+                if member.issym():
+                    links.append(extracted)
+                elif member.isdir():
+                    directories.add(extracted.name)
+                yield member
         zstd = subprocess.Popen(['zstd', '-dc', '-q', str(archive)], stdout=subprocess.PIPE)
-        with tarfile.open(fileobj=zstd.stdout, mode='r|') as stream:
-            stream.extractall(destination/'Contents', filter='data')
+        with zstd.stdout:
+            with tarfile.open(fileobj=zstd.stdout, mode='r|') as stream:
+                stream.extractall(contents, members=members(stream), filter='data')
+            # tarfile stops at the tar's end, before the padding after it, which zstd must still write.
+            while zstd.stdout.read(1 << 20):
+                pass
         if zstd.wait():
             raise SystemExit('zstd failed')
-    marker.write_text(entry['sha256'])
+        # Every install gets the same modification times, so that a build directory kept from an earlier one isn't
+        # older than the SDK: GN names SDK files among its own inputs, and one newer than the build makes it generate
+        # again, which can rerun every macOS link (configure). tarfile gives files and the archive's directories its
+        # times, but each symbolic link the time it's made, so links get theirs here, and what tarfile makes itself,
+        # the directories the archive doesn't list, and what mac-sdk makes, the archive's newest.
+        for link in links:
+            os.utime(contents/link.name, (link.mtime, link.mtime), follow_symlinks=False)
+        # By where they are, as a listed directory may be named through a link.
+        listed = {os.path.realpath(contents/name) for name in directories}
+        made = [Path(top)/name for top, names, _ in os.walk(contents) for name in names
+                if not os.path.islink(Path(top)/name) and os.path.realpath(Path(top)/name) not in listed]
+        root = [] if os.path.realpath(contents) in listed else [contents]
+        for path in [*made, *root, destination]:
+            os.utime(path, (newest, newest))
+        marker.write_text(entry['sha256'])
     summary(f'Apple SDK {entry["sdk"]}, from Xcode {entry["xcode"]}')
 
 
@@ -401,14 +448,13 @@ def checkout_state():
 
 
 def apple_sdk_marker():
-    return checkout_root()/'src'/HERMETIC_XCODE/'.libchromium-apple-sdk'
+    return sdk_marker(checkout_root()/'src'/HERMETIC_XCODE)
 
 
 def built_from(target):
     """The record configure keeps in the build directory: the checkout's state, and for macOS the Apple SDK, which
     is installed in the checkout but never kept with it, so reconcile compares it with the pin instead."""
-    marker = apple_sdk_marker()
-    sdk_pin = marker.read_text() if target_entry(target).get('mac_sdk') and marker.is_file() else None
+    sdk_pin = installed_sdk(checkout_root()/'src'/HERMETIC_XCODE) if target_entry(target).get('mac_sdk') else None
     return {'checkout': checkout_state(), 'apple_sdk': sdk_pin}
 
 
@@ -426,6 +472,19 @@ def well_formed_record(record):
                 all(relative(name) for name in patch['files']) for patch in built['patches'].values())
     except (TypeError, KeyError, AttributeError):
         return False
+
+
+def differing_files(built, state):
+    """The files, relative to src, that differ between two states of the checkout at the same pin and .gclient: those
+    of each patch that differs, either's, and the GN target's copy if it differs."""
+    names = set()
+    for repo in set(built['patches']) | set(state['patches']):
+        had, has = built['patches'].get(repo, {}), state['patches'].get(repo, {})
+        if had.get('sha256') != has.get('sha256'):
+            names |= set(had.get('files', [])) | set(has.get('files', []))
+    if built['gn'] != state['gn']:
+        names |= {f'{GN_DIR}/{name}' for name in set(built['gn']) | set(state['gn'])}
+    return names
 
 
 def step_reconcile(target, args):
@@ -454,13 +513,7 @@ def step_reconcile(target, args):
     if built == state:
         print('reconcile: the build directory was built from this checkout', flush=True)
         return
-    names = set()
-    for repo in set(built['patches']) | set(state['patches']):
-        had, has = built['patches'].get(repo, {}), state['patches'].get(repo, {})
-        if had.get('sha256') != has.get('sha256'):
-            names |= set(had.get('files', [])) | set(has.get('files', []))
-    if built['gn'] != state['gn']:
-        names |= {f'{GN_DIR}/{name}' for name in set(built['gn']) | set(state['gn'])}
+    names = differing_files(built, state)
     src = checkout_root()/'src'
     now = time.time_ns()
     for name in sorted(names):
@@ -492,22 +545,64 @@ def args_gn(target):
     return '\n'.join(lines)+'\n'
 
 
+# Marks a record configure writes only once GN has generated for it; an earlier configure wrote it before.
+RECORD_GENERATION = 2
+
+
 def step_configure(target, args):
     directory = out_dir(target)
     directory.mkdir(parents=True, exist_ok=True)
-    # What the build directory is now built from, for reconcile, once a cache has kept it apart from its checkout.
     record = directory/BUILT_FROM
-    partial = record.with_name(record.name+'.partial')
-    partial.write_text(json.dumps(built_from(target), indent=2, sort_keys=True)+'\n')
-    os.replace(partial, record)
+    try:
+        earlier = json.loads(record.read_text())
+    except (OSError, ValueError):
+        earlier = None
+    built = earlier['checkout'] if well_formed_record(earlier) else None
+    now = built_from(target)
+    # There until GN has generated, so a generation that fails or is stopped, which can leave a build.ninja, happens
+    # again.
+    generating = directory/'.libchromium-generating'
+    sdk_pin = (target_entry(target).get('mac_sdk') or {}).get('sha256')
+    if sdk_pin and now['apple_sdk'] != sdk_pin:
+        raise SystemExit('the pinned Apple SDK is not installed: run mac-sdk')
+    # A new SDK's files have the archive's times, which can be older than what was built from the last, so nothing
+    # would rebuild. CI's reconcile removes a build directory built with another SDK, or with no record, before
+    # mac-sdk installs this one. A build directory that has nothing but what configure writes, or that GN was first
+    # generating for, with no SDK recorded, has built nothing.
+    built_with = earlier.get('apple_sdk') if isinstance(earlier, dict) else None
+    ours = {'args.gn', BUILT_FROM, BUILT_FROM+'.partial', generating.name}
+    if sdk_pin and built_with != sdk_pin and not (built_with is None and generating.exists()) and \
+            any(path.name not in ours for path in directory.iterdir()):
+        raise SystemExit(f'{directory} may have been built with another Apple SDK: run reconcile, which removes it, '
+                         'or remove it')
+    # A toolchain's scripts are no command's inputs: GN puts their times in the commands that run them, such as
+    # TOOL_VERSION in every macOS link, and reads them only when it generates. So GN generates again whenever the
+    # build directory was generated from a checkout whose toolchain may differ, as when patch changed a patch after
+    # reconcile ran, or from one it can't tell.
+    regenerate = not isinstance(earlier, dict) or earlier.get('generation') != RECORD_GENERATION or \
+        built is None or now['checkout'] is None or built['synced'] != now['checkout']['synced'] or \
+        any(name.startswith('build/toolchain/') for name in differing_files(built, now['checkout']))
+
+    def keep():
+        """What the build directory is now built from, for reconcile, once a cache has kept it apart from its
+        checkout: kept only once GN has generated for it, so a failed or stopped generation generates again."""
+        partial = record.with_name(record.name+'.partial')
+        partial.write_text(json.dumps({**now, 'generation': RECORD_GENERATION}, indent=2, sort_keys=True)+'\n')
+        os.replace(partial, record)
     wanted = args_gn(target)
     current = directory/'args.gn'
     # A restored build directory with the same arguments is left alone: a newer args.gn regenerates everything.
-    if current.exists() and current.read_text() == wanted and (directory/'build.ninja').exists():
+    unchanged = current.exists() and current.read_text() == wanted
+    if unchanged and (directory/'build.ninja').exists() and not regenerate and not generating.exists():
+        keep()
         print('configure: arguments unchanged', flush=True)
         return
-    current.write_text(wanted)
+    generating.touch()
+    if not unchanged:
+        current.write_text(wanted)
     run('gn', 'gen', directory, cwd=checkout_root()/'src')
+    keep()
+    generating.unlink()
 
 
 # build

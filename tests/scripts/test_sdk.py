@@ -1,7 +1,9 @@
+import argparse
 import json
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 import unittest.mock
@@ -165,6 +167,7 @@ class Reconcile(Checkout):
         out = sdk.out_dir(target)
         out.mkdir(parents=True, exist_ok=True)
         (out/'obj.o').write_text('')
+        (out/'build.ninja').write_text('')
         (out/sdk.BUILT_FROM).write_text(json.dumps(record if record is not None else sdk.built_from(target)))
         return out
 
@@ -248,33 +251,365 @@ class Reconcile(Checkout):
         self.assertFalse(out.exists())
         self.assertEqual(outside.stat().st_mtime_ns, self.old)
 
+    def install_sdk(self, sha256=None):
+        """An Apple SDK installed whole in the checkout, as its marker and Contents say."""
+        (self.src/sdk.HERMETIC_XCODE/'Contents').mkdir(parents=True, exist_ok=True)
+        sdk.apple_sdk_marker().write_text(sha256 or sdk.target_entry('macos-arm64')['mac_sdk']['sha256'])
+
     def test_macos_built_with_another_apple_sdk_builds_afresh(self):
         marker = sdk.apple_sdk_marker()
-        marker.parent.mkdir(parents=True)
         pinned = sdk.target_entry('macos-arm64')['mac_sdk']['sha256']
         for installed, kept in (('0'*64, False), (pinned, True)):
             with self.subTest(installed=installed):
-                marker.write_text(installed)
+                self.install_sdk(installed)
                 out = self.build('macos-arm64')
                 # A restored checkout never holds the Apple SDK: mac-sdk installs the pinned one after.
                 marker.unlink()
                 self.reconcile('macos-arm64')
                 self.assertEqual(out.exists(), kept)
 
-    def test_configure_records_what_the_build_directory_is_built_from(self):
-        (self.repo/'chromium/args.gn').write_text('is_debug = false\n')
+    def configure(self):
+        """Whether configure ran GN."""
+        if not (self.repo/'chromium/args.gn').exists():
+            (self.repo/'chromium/args.gn').write_text('is_debug = false\n')
         ran = []
-        saved = sdk.run
-        sdk.run = lambda *command, **kwargs: ran.append(command)
-        try:
+        with unittest.mock.patch.object(sdk, 'run', lambda *command, **kwargs: ran.append(command)):
             sdk.step_configure('linux-amd64', None)
-        finally:
-            sdk.run = saved
-        self.assertEqual(ran[0][:2], ('gn', 'gen'))
+        self.assertIn(ran, ([], [('gn', 'gen', sdk.out_dir('linux-amd64'))]))
+        return bool(ran)
+
+    def test_configure_records_what_the_build_directory_is_built_from(self):
+        self.assertTrue(self.configure())
         out = sdk.out_dir('linux-amd64')
-        self.assertEqual(json.loads((out/sdk.BUILT_FROM).read_text()), sdk.built_from('linux-amd64'))
+        self.assertEqual(json.loads((out/sdk.BUILT_FROM).read_text()),
+                         {**sdk.built_from('linux-amd64'), 'generation': 2})
         self.reconcile()
         self.assertEqual(self.touched(), [])
+        (out/'build.ninja').write_text('')
+        self.assertFalse(self.configure())
+
+    def test_configure_generates_again_for_another_patch_of_a_toolchain_script(self):
+        # GN reads such a script's time into the commands that run it, such as macOS's TOOL_VERSION, only when it
+        # generates. Here the build directory and its checkout match when reconcile runs, and then patch changes the
+        # patch, as when a run restores a checkout that isn't for its key.
+        driver = self.src/'build/toolchain/apple/linker_driver.py'
+        driver.parent.mkdir(parents=True)
+        driver.write_text('toc = b""\n')
+        git(self.src, 'add', '.')
+        git(self.src, 'commit', '-qm', 'driver')
+        out = sdk.out_dir('linux-amd64')
+
+        def patched(c_h, driver_text):
+            # reconcile finds the build directory built from the checkout as restored, and then patch changes it.
+            self.reconcile()
+            # src's patch, made from the whole repository, changes a.h and the driver.
+            driver_now = driver.read_text()
+            driver.write_text(driver_text)
+            self.write_patches('A\n', c_h)
+            driver.write_text(driver_now)
+            self.patch()
+            self.assertEqual(driver.read_text(), driver_text)
+            return self.configure()
+        patched('C\n', 'toc = []\n')
+        (out/'build.ninja').write_text('')
+        args = (out/'args.gn').stat().st_mtime_ns
+        # A patch is compared whole: only another patch of a repository whose patch changes no toolchain script
+        # leaves GN alone.
+        for c_h, driver_text, generates in (('D\n', 'toc = []\n', False), ('D\n', 'toc = list()\n', True)):
+            with self.subTest(v8=c_h, driver=driver_text):
+                self.assertEqual(patched(c_h, driver_text), generates)
+                self.assertEqual(json.loads((out/sdk.BUILT_FROM).read_text()),
+                                 {**sdk.built_from('linux-amd64'), 'generation': 2})
+                (out/'build.ninja').write_text('')
+        self.assertEqual((out/'args.gn').stat().st_mtime_ns, args)
+
+    def configure_macos(self):
+        """What configure ran for macOS, with the pinned SDK's marker installed."""
+        if not sdk.apple_sdk_marker().exists():
+            self.install_sdk()
+        ran = []
+        with unittest.mock.patch.object(sdk, 'run', lambda *command, **kwargs: ran.append(command)), \
+                unittest.mock.patch.object(sdk, 'args_gn', return_value='target_os = "mac"\n'):
+            sdk.step_configure('macos-arm64', None)
+        return ran
+
+    def test_configure_refuses_a_build_directory_built_with_another_apple_sdk(self):
+        out = sdk.out_dir('macos-arm64')
+        self.assertEqual(self.configure_macos(), [('gn', 'gen', out)])
+        (out/'build.ninja').write_text('')
+        self.assertEqual(self.configure_macos(), [])
+        record = json.loads((out/sdk.BUILT_FROM).read_text())
+        for built_with in ('0'*64, None):
+            with self.subTest(built_with=built_with):
+                record['apple_sdk'] = built_with
+                (out/sdk.BUILT_FROM).write_text(json.dumps(record))
+                with self.assertRaisesRegex(SystemExit, 'another Apple SDK'):
+                    self.configure_macos()
+
+    def test_configure_refuses_macos_without_the_pinned_sdk(self):
+        self.install_sdk('0'*64)
+        for state in ('another', 'a marker alone', 'none'):
+            with self.subTest(state=state):
+                if state == 'a marker alone':
+                    self.install_sdk()
+                    shutil.rmtree(self.src/sdk.HERMETIC_XCODE)
+                elif state == 'none':
+                    sdk.apple_sdk_marker().unlink()
+                with self.assertRaisesRegex(SystemExit, 'not installed'):
+                    sdk.step_configure('macos-arm64', None)
+
+    def test_configure_generates_again_for_a_record_an_earlier_configure_wrote(self):
+        # It wrote the record before GN generated, so GN may never have generated for it.
+        self.assertTrue(self.configure())
+        out = sdk.out_dir('linux-amd64')
+        (out/'build.ninja').write_text('')
+        record = json.loads((out/sdk.BUILT_FROM).read_text())
+        del record['generation']
+        (out/sdk.BUILT_FROM).write_text(json.dumps(record))
+        self.assertTrue(self.configure())
+        self.assertFalse(self.configure())
+
+    def test_configure_keeps_its_own_record_of_an_unknown_checkout(self):
+        # A record naming no checkout still names the SDK, and generates again.
+        out = sdk.out_dir('macos-arm64')
+        (self.checkout/'.libchromium-checkout.json').unlink()
+        self.assertEqual(self.configure_macos(), [('gn', 'gen', out)])
+        (out/'build.ninja').write_text('')
+        self.assertEqual(self.configure_macos(), [('gn', 'gen', out)])
+
+    def test_configure_refuses_a_macos_build_directory_without_a_record(self):
+        out = sdk.out_dir('macos-arm64')
+        out.mkdir(parents=True)
+        # One that GN was first generating, and stopped, generates again.
+        (out/'.libchromium-generating').touch()
+        (out/'build.ninja').write_text('')
+        self.assertEqual(self.configure_macos(), [('gn', 'gen', out)])
+        (out/'build.ninja').write_text('')
+        self.assertEqual(self.configure_macos(), [])
+        (out/sdk.BUILT_FROM).unlink()
+        with self.assertRaisesRegex(SystemExit, 'another Apple SDK'):
+            self.configure_macos()
+        (out/'build.ninja').unlink()
+        (out/'obj.o').write_text('')
+        with self.assertRaisesRegex(SystemExit, 'another Apple SDK'):
+            self.configure_macos()
+
+    def test_configure_generates_again_without_a_record(self):
+        self.assertTrue(self.configure())
+        out = sdk.out_dir('linux-amd64')
+        (out/'build.ninja').write_text('')
+        (out/sdk.BUILT_FROM).unlink()
+        self.assertTrue(self.configure())
+
+    def test_a_failed_generation_keeps_the_earlier_record(self):
+        self.assertTrue(self.configure())
+        out = sdk.out_dir('linux-amd64')
+        record = json.loads((out/sdk.BUILT_FROM).read_text())
+        record['checkout']['patches']['']['files'] = ['build/toolchain/apple/linker_driver.py']
+        record['checkout']['patches']['']['sha256'] = 'other'
+        (out/sdk.BUILT_FROM).write_text(json.dumps(record))
+
+        def fails(*command, **kwargs):
+            raise SystemExit('gn failed')
+        with unittest.mock.patch.object(sdk, 'run', fails), self.assertRaises(SystemExit):
+            sdk.step_configure('linux-amd64', None)
+        self.assertEqual(json.loads((out/sdk.BUILT_FROM).read_text()), record)
+
+    def test_a_stopped_generation_for_other_arguments_happens_again(self):
+        self.assertTrue(self.configure())
+        out = sdk.out_dir('linux-amd64')
+        (out/'build.ninja').write_text('')
+        (self.repo/'chromium/args.gn').write_text('is_debug = true\n')
+
+        # GN writes build.ninja before the rest of what it generates.
+        def stops(*command, **kwargs):
+            (out/'build.ninja').write_text('new')
+            raise KeyboardInterrupt
+        with unittest.mock.patch.object(sdk, 'run', stops), self.assertRaises(KeyboardInterrupt):
+            sdk.step_configure('linux-amd64', None)
+        ran = []
+        with unittest.mock.patch.object(sdk, 'run', lambda *command, **kwargs: ran.append(command)):
+            sdk.step_configure('linux-amd64', None)
+        self.assertEqual(ran, [('gn', 'gen', out)])
+
+
+@unittest.skipUnless(shutil.which('zstd'), 'needs zstd')
+class AppleSdk(unittest.TestCase):
+    """step_mac_sdk, from an archive like the pinned one."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.destination = self.root/'xcode'
+        self.entry = unittest.mock.patch.object(sdk, 'target_entry')
+        self.entry.start()
+        self.archive()
+
+    def tearDown(self):
+        self.entry.stop()
+        self.tmp.cleanup()
+
+    def archive(self, directories=True, prefix='', padding=0):
+        """An SDK with a header, and a link to its directory as the Apple SDK has it: the link the oldest member,
+        the header the newest, and both older than anything made now."""
+        made = self.root/'made'
+        shutil.rmtree(made, ignore_errors=True)
+        (made/'Developer/include/libxml').mkdir(parents=True)
+        (made/'Developer/include/libxml/tree.h').write_text('tree\n')
+        (made/'Developer/include/libxml2').mkdir()
+        (made/'Developer/include/libxml2/libxml').symlink_to('../libxml')
+        tar_path = self.root/'sdk.tar'
+        with tarfile.open(tar_path, 'w', format=tarfile.PAX_FORMAT) as tar:
+            for path in sorted(made.rglob('*')):
+                if path.is_dir() and not path.is_symlink() and not directories:
+                    continue
+                member = tar.gettarinfo(path, path.relative_to(made).as_posix())
+                if member.issym():
+                    member.name = prefix+member.name
+                member.mtime = 1_500_000_000 if member.issym() else 1_700_000_000 if member.isfile() else 1_600_000_000
+                if member.isfile():
+                    with open(path, 'rb') as data:
+                        tar.addfile(member, data)
+                else:
+                    tar.addfile(member)
+        with open(tar_path, 'ab') as tar:
+            tar.write(bytes(padding))
+        self.path = tar_path.with_suffix('.tar.zst')
+        self.path.unlink(missing_ok=True)
+        subprocess.run(['zstd', '-q', '--rm', str(tar_path)], check=True)
+        sdk.target_entry.return_value = {'mac_sdk': {'sha256': sdk.sha256(self.path), 'sdk': '26.2', 'xcode': '26.2'}}
+
+    def install(self):
+        sdk.step_mac_sdk('macos-arm64', argparse.Namespace(archive=str(self.path), destination=str(self.destination)))
+        return {path.relative_to(self.destination).as_posix(): path.lstat().st_mtime_ns
+                for path in [self.destination, *self.destination.rglob('*')]}
+
+    def marker(self):
+        return self.root/'.xcode.libchromium-apple-sdk'
+
+    def again(self):
+        self.marker().unlink()
+        return self.install()
+
+    def test_every_install_has_the_archives_times(self):
+        first = self.install()
+        self.assertTrue((self.destination/'Contents/Developer/include/libxml2/libxml/tree.h').is_file())
+        self.assertEqual(first['Contents/Developer/include/libxml2/libxml'], 1_500_000_000*10**9)
+        self.assertEqual(first['Contents/Developer/include/libxml'], 1_600_000_000*10**9)
+        self.assertEqual(max(first.values()), 1_700_000_000*10**9)
+        for made in ('.', 'Contents'):
+            self.assertEqual(first[made], 1_700_000_000*10**9)
+        self.assertEqual(self.marker().read_text(), sdk.target_entry('macos-arm64')['mac_sdk']['sha256'])
+        self.assertEqual(oct(self.destination.stat().st_mode & 0o777), oct(0o777 & ~self.umask()))
+        self.assertEqual(self.again(), first)
+
+    def test_padding_after_the_tars_end_is_read(self):
+        # More than a pipe holds, which zstd must write before it exits.
+        self.archive(padding=4 << 20)
+        self.assertEqual(self.install()['Contents/Developer/include/libxml2/libxml'], 1_500_000_000*10**9)
+
+    def test_directories_the_archive_does_not_list_have_its_newest_time(self):
+        self.archive(directories=False)
+        first = self.install()
+        self.assertEqual(first['Contents/Developer/include/libxml'], 1_700_000_000*10**9)
+        self.assertEqual(first['Contents/Developer/include/libxml2/libxml'], 1_500_000_000*10**9)
+        self.assertEqual(self.again(), first)
+
+    def test_a_link_is_timed_by_the_name_it_is_extracted_as(self):
+        # tarfile's data filter strips a leading slash.
+        self.archive(prefix='/')
+        self.assertEqual(self.install()['Contents/Developer/include/libxml2/libxml'], 1_500_000_000*10**9)
+
+    def test_a_listed_directory_named_through_a_link_keeps_its_time(self):
+        made = self.root/'made'
+        shutil.rmtree(made, ignore_errors=True)
+        (made/'Real/Sub').mkdir(parents=True)
+        (made/'Real/Sub/a.h').write_text('a\n')
+        tar_path = self.root/'sdk.tar'
+        with tarfile.open(tar_path, 'w', format=tarfile.PAX_FORMAT) as tar:
+            for name, kind, mtime in (('Real', tarfile.DIRTYPE, 1_600_000_000),
+                                      ('Alias', tarfile.SYMTYPE, 1_500_000_000),
+                                      ('Alias/Sub', tarfile.DIRTYPE, 1_550_000_000),
+                                      ('Real/Sub/a.h', tarfile.REGTYPE, 1_700_000_000)):
+                member = tarfile.TarInfo(name)
+                member.type, member.mtime, member.mode = kind, mtime, 0o755
+                if kind == tarfile.SYMTYPE:
+                    member.linkname = 'Real'
+                if kind == tarfile.REGTYPE:
+                    member.size = 2
+                    with open(made/name, 'rb') as data:
+                        tar.addfile(member, data)
+                else:
+                    tar.addfile(member)
+        self.path = tar_path.with_suffix('.tar.zst')
+        self.path.unlink(missing_ok=True)
+        subprocess.run(['zstd', '-q', '--rm', str(tar_path)], check=True)
+        sdk.target_entry.return_value['mac_sdk']['sha256'] = sdk.sha256(self.path)
+        times = self.install()
+        self.assertEqual(times['Contents/Real/Sub'], 1_550_000_000*10**9)
+        self.assertEqual(times['Contents/Alias'], 1_500_000_000*10**9)
+
+    def test_a_listed_root_keeps_its_time(self):
+        made = self.root/'made'
+        shutil.rmtree(made, ignore_errors=True)
+        made.mkdir()
+        (made/'a.h').write_text('a\n')
+        tar_path = self.root/'sdk.tar'
+        with tarfile.open(tar_path, 'w', format=tarfile.PAX_FORMAT) as tar:
+            for name in ('.', 'a.h'):
+                member = tar.gettarinfo(made/name, name)
+                member.mtime = 1_600_000_000 if name == '.' else 1_700_000_000
+                with open(made/name, 'rb') if member.isfile() else open(os.devnull, 'rb') as data:
+                    tar.addfile(member, data if member.isfile() else None)
+        self.path = tar_path.with_suffix('.tar.zst')
+        self.path.unlink(missing_ok=True)
+        subprocess.run(['zstd', '-q', '--rm', str(tar_path)], check=True)
+        sdk.target_entry.return_value['mac_sdk']['sha256'] = sdk.sha256(self.path)
+        times = self.install()
+        self.assertEqual(times['Contents'], 1_600_000_000*10**9)
+        self.assertEqual(times['.'], 1_700_000_000*10**9)
+
+    def test_a_stopped_replacement_leaves_no_marker_on_what_is_left(self):
+        self.install()
+        rmtree = shutil.rmtree
+
+        # Stopped part-way through removing the installed SDK.
+        def stops(path, *args, **kwargs):
+            if Path(path) == self.destination:
+                rmtree(Path(path)/'Contents')
+                raise KeyboardInterrupt
+            return rmtree(path, *args, **kwargs)
+        self.marker().write_text('another')
+        with unittest.mock.patch.object(sdk.shutil, 'rmtree', stops), self.assertRaises(KeyboardInterrupt):
+            self.install()
+        self.assertFalse(self.marker().exists())
+        self.install()
+        self.assertTrue((self.destination/'Contents/Developer/include/libxml2/libxml/tree.h').is_file())
+
+    def test_a_stopped_install_is_never_taken_for_a_whole_one(self):
+        utime = os.utime
+
+        # Stopped as the last time is set, before the marker is written.
+        def stops(path, *args, **kwargs):
+            if Path(path) == self.destination:
+                raise KeyboardInterrupt
+            return utime(path, *args, **kwargs)
+        with unittest.mock.patch.object(sdk.os, 'utime', stops), self.assertRaises(KeyboardInterrupt):
+            self.install()
+        self.assertFalse(self.marker().exists())
+        self.assertEqual(self.install()['.'], 1_700_000_000*10**9)
+
+    def test_an_sdk_that_is_gone_is_installed_again(self):
+        self.install()
+        shutil.rmtree(self.destination)
+        self.install()
+        self.assertTrue((self.destination/'Contents/Developer/include/libxml2/libxml/tree.h').is_file())
+
+    @staticmethod
+    def umask():
+        mask = os.umask(0)
+        os.umask(mask)
+        return mask
 
 
 class Environment(unittest.TestCase):
