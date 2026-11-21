@@ -27,8 +27,8 @@ exports between its components, and turns off what can't hold across that bounda
 - Every mojom target's C++, its generated code and the traits sources it compiles itself, but for Blink's
   variant, is exported, which a component build compiles hidden into each component that uses it, so that an
   embedder's own mojoms can import Chromium's. Traits a separate target compiles stay hidden.
-- //components/embedder_support:user_agent, which the library's export list names but which has no export
-  macros, is a source set compiled with default visibility, so Chrome's user agent functions are exported.
+- Two targets the library's export list names but which have no export macros are compiled with default
+  visibility: //components/embedder_support:user_agent, Chrome's user agent, made a source set, and //ui/events/blink.
 - Whole-program vtable optimisation stays off: it assumes the link sees every class that implements an
   interface without exported visibility, and an embedder implements Content's delegates outside the library.
 
@@ -221,6 +221,26 @@ EDITS = (
      f'  if ({ARG}) {{\n'
      '    configs += [ ":user_agent_libchromium_exports" ]\n'
      '  }\n'),
+    # //ui/events/blink, which turns UI events into Blink's, is in the library's export list too, a source set with
+    # no export macros: with the argument it's compiled with default visibility.
+    ('ui/events/blink/BUILD.gn',
+     'source_set("blink") {\n'
+     '  sources = [\n'
+     '    "blink_event_util.cc",\n',
+     f'if ({ARG}) {{\n'
+     '  # Exported from the shared library the SDK links, whose export list names\n'
+     '  # it (libchromium).\n'
+     '  config("blink_libchromium_exports") {\n'
+     '    cflags = [ "-fvisibility=default" ]\n'
+     '  }\n'
+     '}\n'
+     '\n'
+     'source_set("blink") {\n'
+     f'  if ({ARG}) {{\n'
+     '    configs += [ ":blink_libchromium_exports" ]\n'
+     '  }\n'
+     '  sources = [\n'
+     '    "blink_event_util.cc",\n'),
     # Not part of the argument: macOS's linker driver writes a shared library's .TOC by appending to bytes, which
     # copies the whole TOC each time. For a library exporting 310,000 symbols that takes minutes on one core, long
     # after the link itself has finished. A list joined once writes the same TOC. Reported upstream as

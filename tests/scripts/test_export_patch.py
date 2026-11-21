@@ -72,7 +72,8 @@ class RewriteHeader(unittest.TestCase):
 
 
 # GN files whose edits each add only what the SDK's switch guards, and GN syntax around it.
-GUARDED = ('mojo/public/tools/bindings/mojom.gni', 'components/embedder_support/BUILD.gn')
+GUARDED = ('mojo/public/tools/bindings/mojom.gni', 'components/embedder_support/BUILD.gn',
+           'ui/events/blink/BUILD.gn')
 # The one file the patches change for a reason other than the SDK's switch.
 TOC_FIX = 'build/toolchain/apple/linker_driver.py'
 

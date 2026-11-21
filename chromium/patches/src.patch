@@ -1895,6 +1895,29 @@ index 51f58f4046a..e0c0cf47879 100644
  
  #if defined(WIN32)
  
+diff --git a/ui/events/blink/BUILD.gn b/ui/events/blink/BUILD.gn
+index 82effa0b84c..1f1b25eb7c7 100644
+--- a/ui/events/blink/BUILD.gn
++++ b/ui/events/blink/BUILD.gn
+@@ -15,7 +15,18 @@ component("blink_features") {
+   deps = [ "//base" ]
+ }
+ 
++if (libchromium_exports) {
++  # Exported from the shared library the SDK links, whose export list names
++  # it (libchromium).
++  config("blink_libchromium_exports") {
++    cflags = [ "-fvisibility=default" ]
++  }
++}
++
+ source_set("blink") {
++  if (libchromium_exports) {
++    configs += [ ":blink_libchromium_exports" ]
++  }
+   sources = [
+     "blink_event_util.cc",
+     "blink_event_util.h",
 diff --git a/ui/events/devices/events_devices_export.h b/ui/events/devices/events_devices_export.h
 index f4990ce08b1..dd79ca0120a 100644
 --- a/ui/events/devices/events_devices_export.h
