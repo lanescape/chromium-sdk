@@ -97,11 +97,20 @@ class CarriedPatches(unittest.TestCase):
         fix = {line for path, old, new in export_patch.EDITS if path == TOC_FIX
                for line in set(new.splitlines()) - set(old.splitlines())}
         self.assertTrue(fix)
-        guarded_edits = [(path, new) for path, old, new in export_patch.EDITS if path in GUARDED]
-        self.assertEqual({path for path, _ in guarded_edits}, set(GUARDED))
-        for _, new in guarded_edits:
+        guarded_edits = [(path, old, new) for path, old, new in export_patch.EDITS if path in GUARDED]
+        self.assertEqual({path for path, _, _ in guarded_edits}, set(GUARDED))
+        for path, old, new in guarded_edits:
             self.assertIn(f'if ({export_patch.ARG}', new)
-        guarded = {path: {line for edit_path, new in guarded_edits if edit_path == path for line in new.splitlines()}
+            if path == GUARDED[0]:
+                # The mojom template's edits keep all of its own text, and only add blocks the switch guards.
+                self.assertIn(old, new)
+            else:
+                # The other two keep every line they replace but the target's declaration, in order.
+                kept = [line for line in old.splitlines() if not line.startswith(('static_library(', 'source_set('))]
+                remaining = iter(new.splitlines())
+                self.assertTrue(all(line in remaining for line in kept), path)
+                self.assertIn('"user_agent")' if 'embedder_support' in path else 'source_set("blink")', new)
+        guarded = {path: {line for edit_path, _, new in guarded_edits if edit_path == path for line in new.splitlines()}
                    for path in GUARDED}
         for patch in sorted((REPO/'chromium/patches').glob('**/*.patch')):
             path = None

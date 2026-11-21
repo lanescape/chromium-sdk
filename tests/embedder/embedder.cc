@@ -32,6 +32,7 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "components/embedder_support/user_agent_utils.h"
 #include "content/public/app/content_main.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/browser/browser_context.h"
@@ -52,6 +53,7 @@
 #include "tests/embedder/platform.h"
 #include "tests/embedder/probe.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_document.h"
@@ -59,6 +61,9 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_scale_factor.h"
+#include "ui/events/blink/web_input_event.h"
+#include "ui/events/event.h"
+#include "ui/events/event_constants.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image.h"
 #include "url/gurl.h"
@@ -207,7 +212,25 @@ class Check : public content::WebContentsObserver {
       return;
     }
     fprintf(stderr, "embedder: the renderer answered %s through probe.mojom\n", text.c_str());
-    Finish(0);
+    Finish(ExportsWork() ? 0 : 1);
+  }
+
+  // Two targets the SDK exports although they carry no export macros (specs/0001-sdk.md, Exports): Chrome's user
+  // agent, and the conversion of UI events into Blink's.
+  static bool ExportsWork() {
+    const std::string agent = embedder_support::GetUserAgent();
+    if (agent.find("Chrome/") == std::string::npos) {
+      fprintf(stderr, "embedder: the user agent is \"%s\", with no Chrome/\n", agent.c_str());
+      return false;
+    }
+    const ui::MouseEvent press(ui::EventType::kMousePressed, gfx::PointF(3, 5), gfx::PointF(3, 5),
+                               base::TimeTicks::Now(), ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+    if (ui::MakeWebMouseEvent(press).GetType() != blink::WebInputEvent::Type::kMouseDown) {
+      fprintf(stderr, "embedder: a mouse press didn't become Blink's mouse down\n");
+      return false;
+    }
+    fprintf(stderr, "embedder: the user agent and event conversion work\n");
+    return true;
   }
 
   void OnProbeGone() {
