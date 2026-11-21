@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -388,6 +389,60 @@ def type_mappings(linked, out):
     return {'c++': merged}
 
 
+def module_namespaces(modules, src):
+    """Every mojom namespace the parsed modules reach: their own, and those of every module any kind they hold
+    belongs to, through fields, parameters and imported kinds, read with Chromium's own mojom package from the
+    checkout. An embedder's bindings for a type that imports any of these can need those types' mappings."""
+    tools = str(Path(src)/'mojo/public/tools/mojom')
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    from mojom.generate import module as mojom_module
+    namespaces = set()
+    for path in modules:
+        with open(path, 'rb') as stream:
+            loaded = mojom_module.Module.Load(stream)
+        # By identity, within one module's graph, which stays alive while it's walked: ids are reused once freed.
+        pending, seen = [loaded], set()
+        while pending:
+            item = pending.pop()
+            if id(item) in seen:
+                continue
+            seen.add(id(item))
+            if isinstance(item, (list, tuple, set)):
+                pending.extend(item)
+            elif isinstance(item, dict):
+                pending.extend(item.values())
+            elif type(item).__module__ == mojom_module.__name__:
+                if isinstance(item, mojom_module.Module):
+                    namespaces.add(item.mojom_namespace)
+                pending.extend(vars(item).values())
+    return namespaces
+
+
+def drop_unusable_mappings(mappings, missing, namespaces):
+    """Drops the type mappings that name a header that doesn't ship (missing, as roots), if no importable mojom can
+    reach their type: no shipped module reaches the type's namespace (module_namespaces()), so no embedder's
+    bindings can use the type, and nothing includes the header. One whose namespace a shipped module reaches stops
+    the packaging, whichever target declared the mapping, and so does any, if a reachable module has no namespace.
+    Returns the dropped types."""
+    dropped = []
+    for typename, mapping in list(mappings['c++'].items()):
+        if not mapping_roots(mapping) & set(missing):
+            continue
+        if '' in namespaces or any(typename.startswith(namespace+'.') for namespace in namespaces):
+            raise SystemExit(f'{typename} is mapped to a header that doesn\'t ship, yet a shipped mojom module '
+                             'declares its namespace')
+        del mappings['c++'][typename]
+        dropped.append(typename)
+    return dropped
+
+
+def mapping_roots(mapping):
+    """A mapping's headers, as mapping_headers() names them as roots."""
+    return {prefix+header for header in mapping.get('public_headers', []) + mapping.get('traits_headers', [])
+            for prefix in ('../../', 'gen/')}
+
+
 def mojom_features(src, out):
     """The features the build parsed Chromium's mojoms with, which an embedder's must be parsed with too."""
     label = '//mojo/public/mojom/base:base__parser_action'
@@ -606,11 +661,14 @@ def package(target, checkout, out, version, output, quick=False):
                 headers[f'include/{path.relative_to(src).as_posix()}'] = path
     # A mapping whose header doesn't ship, because it doesn't preprocess with the SDK's flags, would make an
     # embedder's generated bindings include a file the SDK lacks.
-    if unshipped := unshipped_mapping_headers(mapped, headers):
-        raise SystemExit(f'{len(unshipped)} headers the type mappings name don\'t ship, such as '
-                         f'{", ".join(unshipped[:5])}')
     # Mojom: what an embedder needs to generate its own mojoms' bindings, beside the headers they compile against.
-    headers.update(mojom_files(headers, src, out, incomplete))
+    importable = mojom_files(headers, src, out, incomplete)
+    if unshipped := unshipped_mapping_headers(mapped, headers):
+        namespaces = module_namespaces([path for name, path in importable.items() if name.endswith('-module')], src)
+        dropped = drop_unusable_mappings(mappings, unshipped, namespaces)
+        summary(f'{target}: dropped {len(dropped)} type mappings whose headers don\'t ship, in namespaces no '
+                f'importable mojom reaches: {", ".join(dropped)}')
+    headers.update(importable)
     headers_dir = part('headers')
     for relative, source in headers.items():
         destination = headers_dir/relative

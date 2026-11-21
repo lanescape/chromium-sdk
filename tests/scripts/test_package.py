@@ -195,6 +195,19 @@ class Mojom(unittest.TestCase):
         shipped['gen/media/base/generated.h'] = None
         self.assertEqual(package.unshipped_mapping_headers(roots, shipped), [])
 
+    def test_unusable_mappings_are_dropped_and_usable_ones_stop_the_packaging(self):
+        action = {'public_headers': [], 'traits_headers': ['components/x/traits.h']}
+        string16 = {'public_headers': ['base/strings/string16.h'], 'traits_headers': []}
+        mappings = {'c++': {'omnibox.mojom.Action': action, 'mojo_base.mojom.String16': string16}}
+        dropped = package.drop_unusable_mappings(mappings, ['../../components/x/traits.h'], {'mojo_base.mojom'})
+        self.assertEqual(dropped, ['omnibox.mojom.Action'])
+        self.assertEqual(list(mappings['c++']), ['mojo_base.mojom.String16'])
+        mappings['c++']['omnibox.mojom.Action'] = action
+        with self.assertRaisesRegex(SystemExit, 'omnibox.mojom.Action is mapped'):
+            package.drop_unusable_mappings(mappings, ['../../components/x/traits.h'], {'omnibox.mojom'})
+        with self.assertRaisesRegex(SystemExit, 'omnibox.mojom.Action is mapped'):
+            package.drop_unusable_mappings(mappings, ['../../components/x/traits.h'], {'mojo_base.mojom', ''})
+
     def test_a_mapping_header_that_is_nowhere_stops_the_packaging(self):
         mappings = {'c++': {'x.mojom.Y': {'public_headers': ['media/base/absent.h'], 'traits_headers': []}}}
         with self.assertRaisesRegex(SystemExit, 'media/base/absent.h'):
